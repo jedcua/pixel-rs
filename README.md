@@ -1,0 +1,219 @@
+# pixel-rs
+
+`pixel-rs` is a parser and PNG renderer for `.pxl` files. A `.pxl` file is a
+plain text file that describes one pixel art image.
+
+## The `.pxl` format
+
+```pxl
+O - #000000FF
+X - #FFFFFFFF
+
+XXXXX
+XOOOX
+XOOOX
+XOOOX
+XXXXX
+```
+
+A `.pxl` file has two sections. One or more blank lines separate them.
+
+1. **Palette.** Each line maps one char to one color, in the form
+   `<char> - #RRGGBBAA`.
+   - The key is exactly one char. It cannot be whitespace.
+   - The spaces around the `-` are optional.
+   - The color is `#` and 8 hex digits: red, green, blue, and alpha.
+     Uppercase and lowercase digits are both valid.
+   - Each key can occur one time only.
+2. **Pixel data.** Each line is one row of the image. Each char is one pixel.
+   - Each char must be a key in the palette.
+   - All rows must have the same width.
+   - A blank line inside the pixel data is an error.
+
+The parser ignores trailing whitespace on a line. It accepts LF and CRLF line
+endings. If the file is not valid, the error gives the line, the column, and
+the action to take:
+
+```text
+error: art.pxl: line 5, column 2: char `0` is not in the palette; add it to the palette
+```
+
+## Setup
+
+This project uses [mise](https://mise.jdx.dev) to install the Rust toolchain
+and to run tasks.
+
+```sh
+mise trust
+mise install
+```
+
+To use `pxl` in any directory, install it in `$HOME/.local/bin`:
+
+```sh
+mise run install
+```
+
+The task builds the release binary and copies it there. Run the task again
+after you change the code. If `$HOME/.local/bin` is not in your `PATH`, the
+task gives a warning. Then add the directory to `PATH` in your shell profile.
+
+## Usage
+
+```text
+pxl [-g] [-o output] [-s scale] file
+```
+
+Render a file to PNG. Each char becomes one pixel, and the output goes to
+`examples/square.png`:
+
+```sh
+mise run render -- examples/square.pxl
+```
+
+Render at a higher resolution. Each char becomes a 20 x 20 block of pixels,
+so the 5 x 5 example becomes a 100 x 100 PNG:
+
+```sh
+mise run render -- -s 20 -o square.png examples/square.pxl
+```
+
+| Operand or option     | Default                          | Description                                    |
+| --------------------- | -------------------------------- | ---------------------------------------------- |
+| `file`                | (required)                       | Path to the `.pxl` file. `-` means stdin.      |
+| `-o`, `--output`      | Input path with `.png` extension | Path to the output PNG. `-` means stdout.      |
+| `-s`, `--scale`       | `1`                              | Size in output pixels of one char (1 or more). |
+| `-g`, `--grid`        | Off                              | Render the grid view (see below).              |
+
+If `file` is `-` and you do not give `-o`, the PNG goes to stdout, so you can
+use `pxl` in a pipeline:
+
+```sh
+generate-art | pxl -s 10 - > art.png
+```
+
+### Grid view
+
+Use `-g` to make an image for inspection. The pixel colors stay the same, and
+the grid view adds these items:
+
+- A 1 px line between all cells. The line at each multiple of 10 is darker.
+- The x coordinate at the top and the y coordinate at the left, every 10 or
+  more cells. Coordinates start at 0.
+- A checkerboard behind transparent pixels.
+
+Use a scale of 4 or more, so that the cells are larger than the lines:
+
+```sh
+mise run render -- -g -s 8 -o grid.png examples/square.pxl
+```
+
+## Tasks
+
+| Task             | Description                         |
+| ---------------- | ----------------------------------- |
+| `mise run build` | Build the debug binary. Add `--release` for a release build. |
+| `mise run test`  | Run all tests.                      |
+| `mise run lint`  | Check the format and run clippy. Clippy denies all warnings, including the `pedantic` group. |
+| `mise run fmt`   | Format the source code.             |
+| `mise run install` | Build the release binary and install `pxl` in `$HOME/.local/bin`. |
+| `mise run render -- <args>` | Render a `.pxl` file to PNG. |
+
+The clippy settings are in two files:
+
+- `Cargo.toml`, in the `[lints.clippy]` table: denies the `pedantic` group,
+  `cognitive_complexity`, and `excessive_nesting`.
+- `clippy.toml`: sets the limits. A function can have at most 40 lines, 4
+  arguments, 4 levels of nesting, and a cognitive complexity of 7.
+
+Fix the code to obey a lint. Use `#[allow]` only if the fix makes the code
+worse, and write a comment that gives the reason.
+
+## Agent skill
+
+`.agents/skills/pxl-art/` is an agent skill for drawing `.pxl` art. The skill
+tells the agent to work like a pixel artist, in short passes of draw, look,
+and refine:
+
+1. The agent edits the `.pxl` file directly. It does not generate pixels with
+   a script.
+2. After each pass, the agent renders the clean view and the grid view and
+   looks at them.
+3. The agent writes a list of defects with coordinates, then corrects the
+   worst defect first.
+
+The stages are brief, layout plan, palette, canvas, silhouette, lines,
+shading, detail, cleanup, and final check. `references/TECHNIQUES.md` lists
+the principles of good pixel art and the common defects.
+
+You can give options in the request, in words or as `name: value` pairs:
+
+```text
+Draw a treasure chest. quality: polished, style: 16-bit, colors: 12, size: 32x32
+```
+
+| Option       | Values                                                       |
+| ------------ | ------------------------------------------------------------ |
+| `quality`    | `sketch`, `clean` (default), `polished`                      |
+| `style`      | `1-bit`, `gameboy`, `8-bit`, `16-bit` (default), `modern`, `flat` |
+| `colors`     | Maximum palette size                                         |
+| `palette`    | `free`, `1-bit`, `gameboy`, `pico-8`, or a list of hex colors |
+| `size`       | `WxH`                                                        |
+| `outline`    | `full`, `selective`, `none`                                  |
+| `shading`    | `flat`, `cel`, `soft`, `dither`                              |
+| `light`      | `top-left` (default), `top`, `top-right`, `left`, `right`, `front` |
+| `background` | `transparent` (default) or a hex color                       |
+| `view`       | `front`, `three-quarter`, `side`, `top-down`, `isometric`    |
+
+`quality` sets how many stages and critique passes the agent does. Each style
+sets default values for the other options. An option that you give has
+priority over the style.
+
+### Install the skill
+
+The skill runs the `pxl` command, so install `pxl` first:
+
+```sh
+mise run install
+```
+
+Inside this repository, most harnesses find the skill with no setup. To use
+the skill in other projects, link it into the skills directory of your
+harness. A link keeps the skill up to date when you pull changes. Run the
+commands from the root of this repository.
+
+| Harness                          | Skills directory    | Reads `.agents/skills/` in this repository |
+| -------------------------------- | ------------------- | ------------------------------------------ |
+| Codex, Gemini CLI, OpenCode, omp | `~/.agents/skills/` | Yes                                        |
+| Claude Code                      | `~/.claude/skills/` | No                                         |
+
+For Codex, Gemini CLI, OpenCode, omp, and other harnesses that read the
+shared `~/.agents/skills/` directory:
+
+```sh
+mkdir -p ~/.agents/skills
+ln -s "$PWD/.agents/skills/pxl-art" ~/.agents/skills/pxl-art
+```
+
+For Claude Code:
+
+```sh
+mkdir -p ~/.claude/skills
+ln -s "$PWD/.agents/skills/pxl-art" ~/.claude/skills/pxl-art
+```
+
+To use Claude Code only in this repository, link the skill into the
+project. Use a relative link, so that the link works in all clones:
+
+```sh
+mkdir -p .claude/skills
+ln -s ../../.agents/skills/pxl-art .claude/skills/pxl-art
+```
+
+For a harness that uses a different directory, link or copy the `pxl-art`
+directory into its skills directory. The skill uses only the standard `name`
+and `description` fields, so any harness that supports the
+[Agent Skills](https://agentskills.io) format can load it.
+
+Start a new session after you install the skill. Most harnesses read the
+skills only when a session starts.

@@ -1,0 +1,38 @@
+[tools]
+rust = { version = "stable", components = "clippy,rustfmt" }
+
+[tasks.build]
+description = "Build the debug binary, or the release binary with --release"
+usage = 'flag "--release" help="Build with the release profile"'
+run = "cargo build{% if usage.release %} --release{% endif %}"
+
+[tasks.test]
+description = "Run all tests"
+run = "cargo test"
+
+[tasks.lint]
+description = "Check format and run clippy"
+run = [
+  "cargo fmt --check",
+  "cargo clippy --all-targets -- -D warnings",
+]
+
+[tasks.fmt]
+description = "Format the source code"
+run = "cargo fmt"
+
+[tasks.install]
+description = "Build the release binary and install pxl in $HOME/.local/bin"
+run = '''
+cargo build --release
+install -D -m 755 target/release/pxl "$HOME/.local/bin/pxl"
+echo "installed $HOME/.local/bin/pxl"
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) echo "warning: $HOME/.local/bin is not in PATH; add it to PATH in your shell profile" >&2 ;;
+esac
+'''
+
+[tasks.render]
+description = "Render a .pxl file to PNG (example: mise run render -- art.pxl --scale 10)"
+run = "cargo run --release --quiet --"

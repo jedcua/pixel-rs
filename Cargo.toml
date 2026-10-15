@@ -1,0 +1,25 @@
+[package]
+name = "pixel-rs"
+version = "0.1.0"
+edition = "2024"
+description = "Parser and PNG renderer for the .pxl pixel art text format"
+
+[lib]
+name = "pxl"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pxl"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
+png = "0.18.1"
+
+# `cargo clippy --all-targets` is the lint gate. Pedantic is denied. The
+# limits for `cognitive_complexity`, `excessive_nesting`, `too_many_lines`, and
+# `too_many_arguments` are in `clippy.toml`.
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+cognitive_complexity = "deny"
+excessive_nesting = "deny"
