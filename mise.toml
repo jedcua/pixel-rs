@@ -25,7 +25,8 @@ run = "cargo fmt"
 description = "Build the release binary and install pxl in $HOME/.local/bin"
 run = '''
 cargo build --release
-install -D -m 755 target/release/pxl "$HOME/.local/bin/pxl"
+mkdir -p "$HOME/.local/bin"
+install -m 755 target/release/pxl "$HOME/.local/bin/pxl"
 echo "installed $HOME/.local/bin/pxl"
 case ":$PATH:" in
   *":$HOME/.local/bin:"*) ;;
