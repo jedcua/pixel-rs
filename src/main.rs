@@ -7,11 +7,14 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-/// Render a .pxl pixel art file to a PNG image.
+mod editor;
+
+/// Render a .pxl pixel art file to a PNG image or to the terminal, or edit it
+/// in the terminal.
 #[derive(Parser)]
 #[command(
     version,
-    override_usage = "pxl [-g] [-o output] [-s scale] file",
+    override_usage = "pxl [-g] [-o output] [-s scale] file\n       pxl -p file\n       pxl -e file",
     args_override_self = true
 )]
 struct Cli {
@@ -32,6 +35,15 @@ struct Cli {
     /// at the left. Lines at multiples of 10 are darker. Use a scale of 4 or more.
     #[arg(short, long)]
     grid: bool,
+
+    /// Open the file in the terminal editor, and do not render a PNG.
+    #[arg(short, long, conflicts_with_all = ["output", "scale", "grid", "print"])]
+    edit: bool,
+
+    /// Print the image to stdout with 24-bit terminal colors, and do not
+    /// render a PNG. Each char shows two pixels, one above the other.
+    #[arg(short, long, conflicts_with_all = ["output", "scale", "grid"])]
+    print: bool,
 }
 
 fn main() -> ExitCode {
@@ -46,9 +58,18 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: &Cli) -> Result<(), String> {
+    if cli.edit {
+        if is_stdio(&cli.input) {
+            return Err("cannot edit stdin; give a file path".into());
+        }
+        return editor::run(&cli.input);
+    }
     let input = describe(&cli.input, "stdin");
     let source = read_source(&cli.input).map_err(|err| format!("cannot read {input}: {err}"))?;
     let image = pxl::parse(&source).map_err(|err| format!("{input}: {err}"))?;
+    if cli.print {
+        return print_ansi(&image);
+    }
     let canvas = if cli.grid {
         pxl::render_grid(&image, cli.scale)
     } else {
@@ -84,6 +105,15 @@ fn read_source(path: &Path) -> io::Result<String> {
     } else {
         fs::read_to_string(path)
     }
+}
+
+/// Writes `image` to stdout as terminal text.
+fn print_ansi(image: &pxl::Image) -> Result<(), String> {
+    let mut stdout = io::stdout().lock();
+    stdout
+        .write_all(pxl::render_ansi(image).as_bytes())
+        .and_then(|()| stdout.flush())
+        .map_err(|err| format!("cannot write stdout: {err}"))
 }
 
 /// Returns true if `path` is the `-` operand for stdin or stdout.

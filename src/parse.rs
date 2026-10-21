@@ -4,9 +4,34 @@ use std::collections::HashMap;
 use std::fmt;
 use std::iter::Peekable;
 
+use crate::document::{Document, PaletteEntry};
+
 /// One RGBA color, 8 bits per channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rgba(pub [u8; 4]);
+
+impl Rgba {
+    /// Parses `#` and 8 hex digits (RRGGBBAA). Uppercase and lowercase digits
+    /// are both valid. Returns `None` for other text.
+    #[must_use]
+    pub fn from_hex(text: &str) -> Option<Self> {
+        let hex = text.strip_prefix('#')?;
+        // Check the digits first: `from_str_radix` also accepts a leading `+`.
+        if hex.len() != 8 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        let value = u32::from_str_radix(hex, 16).ok()?;
+        Some(Rgba(value.to_be_bytes()))
+    }
+}
+
+/// Writes the color as `#RRGGBBAA` with uppercase digits.
+impl fmt::Display for Rgba {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let [red, green, blue, alpha] = self.0;
+        write!(f, "#{red:02X}{green:02X}{blue:02X}{alpha:02X}")
+    }
+}
 
 /// A parsed pixel art image.
 ///
@@ -21,6 +46,14 @@ pub struct Image {
 }
 
 impl Image {
+    pub(crate) fn new(width: u32, height: u32, pixels: Vec<Rgba>) -> Self {
+        Image {
+            width,
+            height,
+            pixels,
+        }
+    }
+
     #[must_use]
     pub fn width(&self) -> u32 {
         self.width
@@ -157,6 +190,11 @@ impl std::error::Error for ParseError {}
 /// Returns a [`ParseError`] with the line, the column, and the cause if the
 /// source is not a valid `.pxl` file.
 pub fn parse(source: &str) -> Result<Image, ParseError> {
+    parse_document(source).map(|document| document.to_image())
+}
+
+/// Parses `.pxl` source text into a [`Document`].
+pub(crate) fn parse_document(source: &str) -> Result<Document, ParseError> {
     let mut lines = source
         .lines()
         .enumerate()
@@ -164,25 +202,28 @@ pub fn parse(source: &str) -> Result<Image, ParseError> {
         .skip_while(|(_, line)| line.is_empty())
         .peekable();
     let palette = parse_palette(&mut lines)?;
-    parse_pixels(lines.skip_while(|(_, line)| line.is_empty()), &palette)
+    parse_pixels(lines.skip_while(|(_, line)| line.is_empty()), palette)
 }
 
 /// A source line, trimmed at the end, with its 1-based line number.
 type Line<'a> = (usize, &'a str);
 
-type Palette = HashMap<char, Rgba>;
+/// Palette index of each key.
+type KeyIndex = HashMap<char, usize>;
 
 /// Parses the palette entries up to the first blank line.
 fn parse_palette<'a>(
     lines: &mut Peekable<impl Iterator<Item = Line<'a>>>,
-) -> Result<Palette, ParseError> {
-    let mut palette = Palette::new();
+) -> Result<Vec<PaletteEntry>, ParseError> {
+    let mut palette = Vec::new();
+    let mut keys = KeyIndex::new();
     while let Some((number, line)) = lines.next_if(|(_, line)| !line.is_empty()) {
-        let (key, color) = parse_palette_entry(number, line)?;
-        if palette.insert(key, color).is_some() {
-            let kind = ParseErrorKind::DuplicateKey(key);
+        let entry = parse_palette_entry(number, line)?;
+        if keys.insert(entry.key, palette.len()).is_some() {
+            let kind = ParseErrorKind::DuplicateKey(entry.key);
             return Err(ParseError::new(number, 1, kind));
         }
+        palette.push(entry);
     }
     if palette.is_empty() {
         let line = lines.peek().map_or(1, |&(number, _)| number);
@@ -191,11 +232,16 @@ fn parse_palette<'a>(
     Ok(palette)
 }
 
-/// Parses the pixel rows into an [`Image`]. `lines` starts at the first row.
+/// Parses the pixel rows into a [`Document`]. `lines` starts at the first row.
 fn parse_pixels<'a>(
     lines: impl Iterator<Item = Line<'a>>,
-    palette: &Palette,
-) -> Result<Image, ParseError> {
+    palette: Vec<PaletteEntry>,
+) -> Result<Document, ParseError> {
+    let keys: KeyIndex = palette
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| (entry.key, index))
+        .collect();
     let mut pixels = Vec::new();
     let mut width = 0;
     let mut height = 0;
@@ -211,7 +257,7 @@ fn parse_pixels<'a>(
         if let Some(blank) = blank_line {
             return Err(ParseError::new(blank, 1, ParseErrorKind::BlankLineInPixels));
         }
-        let row_width = parse_row(number, line, palette, &mut pixels)?;
+        let row_width = parse_row(number, line, &keys, &mut pixels)?;
         if height == 0 {
             width = row_width;
         } else if row_width != width {
@@ -228,35 +274,33 @@ fn parse_pixels<'a>(
         return Err(ParseError::new(last_line, 1, ParseErrorKind::MissingPixels));
     }
     let too_large = |_| ParseError::new(last_line, 1, ParseErrorKind::TooLarge);
-    Ok(Image {
-        width: u32::try_from(width).map_err(too_large)?,
-        height: u32::try_from(height).map_err(too_large)?,
-        pixels,
-    })
+    let width = u32::try_from(width).map_err(too_large)?;
+    let height = u32::try_from(height).map_err(too_large)?;
+    Ok(Document::from_parts(palette, width, height, pixels))
 }
 
-/// Appends the colors of one pixel row to `pixels`, and returns the row width.
-/// `number` is the line number for errors.
+/// Appends the palette indices of one pixel row to `pixels`, and returns the
+/// row width. `number` is the line number for errors.
 fn parse_row(
     number: usize,
     line: &str,
-    palette: &Palette,
-    pixels: &mut Vec<Rgba>,
+    keys: &KeyIndex,
+    pixels: &mut Vec<usize>,
 ) -> Result<usize, ParseError> {
     let row_start = pixels.len();
     for (column, key) in line.chars().enumerate() {
-        let color = palette
+        let index = keys
             .get(&key)
             .copied()
             .ok_or_else(|| ParseError::new(number, column + 1, ParseErrorKind::UnknownKey(key)))?;
-        pixels.push(color);
+        pixels.push(index);
     }
     Ok(pixels.len() - row_start)
 }
 
 /// Parses one palette line in the form `<char> - #RRGGBBAA`. `number` is the
 /// line number for errors. The line must not be empty.
-fn parse_palette_entry(number: usize, line: &str) -> Result<(char, Rgba), ParseError> {
+fn parse_palette_entry(number: usize, line: &str) -> Result<PaletteEntry, ParseError> {
     let mut chars = line.chars();
     let key = chars.next().expect("palette line is not empty");
     if key.is_whitespace() {
@@ -275,15 +319,10 @@ fn parse_palette_entry(number: usize, line: &str) -> Result<(char, Rgba), ParseE
     }
 
     let column = line.chars().count() - color.chars().count() + 1;
-    let invalid_color =
-        || ParseError::new(number, column, ParseErrorKind::InvalidColor(color.into()));
-    let hex = color.strip_prefix('#').ok_or_else(invalid_color)?;
-    // Check the digits first: `from_str_radix` also accepts a leading `+`.
-    if hex.len() != 8 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(invalid_color());
-    }
-    let value = u32::from_str_radix(hex, 16).expect("hex is 8 hex digits");
-    Ok((key, Rgba(value.to_be_bytes())))
+    let color = Rgba::from_hex(color).ok_or_else(|| {
+        ParseError::new(number, column, ParseErrorKind::InvalidColor(color.into()))
+    })?;
+    Ok(PaletteEntry { key, color })
 }
 
 #[cfg(test)]

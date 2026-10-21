@@ -2,7 +2,7 @@
 name = "pixel-rs"
 version = "0.1.0"
 edition = "2024"
-description = "Parser and PNG renderer for the .pxl pixel art text format"
+description = "Parser, PNG renderer, and terminal editor for the .pxl pixel art text format"
 
 [lib]
 name = "pxl"
@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
 png = "0.18.1"
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm", "layout-cache"] }
 
 # `cargo clippy --all-targets` is the lint gate. Pedantic is denied. The
 # limits for `cognitive_complexity`, `excessive_nesting`, `too_many_lines`, and

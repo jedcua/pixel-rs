@@ -1,7 +1,7 @@
 # pixel-rs
 
-`pixel-rs` is a parser and PNG renderer for `.pxl` files. A `.pxl` file is a
-plain text file that describes one pixel art image.
+`pixel-rs` is a parser, PNG renderer, and terminal editor for `.pxl` files. A
+`.pxl` file is a plain text file that describes one pixel art image.
 
 ## The `.pxl` format
 
@@ -62,6 +62,8 @@ task gives a warning. Then add the directory to `PATH` in your shell profile.
 
 ```text
 pxl [-g] [-o output] [-s scale] file
+pxl -p file
+pxl -e file
 ```
 
 Render a file to PNG. Each char becomes one pixel, and the output goes to
@@ -84,6 +86,8 @@ mise run render -- -s 20 -o square.png examples/square.pxl
 | `-o`, `--output`      | Input path with `.png` extension | Path to the output PNG. `-` means stdout.      |
 | `-s`, `--scale`       | `1`                              | Size in output pixels of one char (1 or more). |
 | `-g`, `--grid`        | Off                              | Render the grid view (see below).              |
+| `-p`, `--print`       | Off                              | Print the image in the terminal (see below). You cannot use it with `-o`, `-s`, `-g`, or `-e`. |
+| `-e`, `--edit`        | Off                              | Open the file in the terminal editor (see below). You cannot use it with `-o`, `-s`, `-g`, `-p`, or `-` as `file`. |
 
 If `file` is `-` and you do not give `-o`, the PNG goes to stdout, so you can
 use `pxl` in a pipeline:
@@ -107,6 +111,77 @@ Use a scale of 4 or more, so that the cells are larger than the lines:
 ```sh
 mise run render -- -g -s 8 -o grid.png examples/square.pxl
 ```
+
+### Print in the terminal
+
+Use `-p` to see a file in the terminal, with no PNG and no editor:
+
+```sh
+pxl -p examples/basketball.pxl
+```
+
+Each char shows two pixels: the upper pixel as the color of `▀`, and the
+lower pixel as the background color. Thus a 32 x 32 image takes 32 columns
+and 16 lines. A pixel with an alpha below 128 shows the terminal background.
+Other pixels show their color and ignore the alpha.
+
+The output uses 24-bit ANSI colors. Use a terminal with 24-bit color, because
+other terminals show approximate colors. `-` reads the file from stdin:
+
+```sh
+generate-art | pxl -p -
+```
+
+### Terminal editor
+
+Use `-e` to edit a file in the terminal:
+
+```sh
+pxl -e examples/basketball.pxl
+```
+
+The screen has a canvas at the left and the palette at the right. Each pixel
+is two terminal columns wide, so that it is about square. Transparent pixels
+show a checkerboard. Use a terminal with 24-bit color, because other
+terminals show approximate colors. The file always keeps the exact colors.
+
+| Action                      | Mouse                                   | Key                     |
+| --------------------------- | --------------------------------------- | ----------------------- |
+| Draw with the selected color | Click or drag on the canvas            |                         |
+| Select a color              | Click a palette row                     | `Tab`, `Shift+Tab`      |
+| Pick a color from the image | Right-click a pixel                     | `i` (the pixel below the pointer) |
+| Add a color                 | **Add**                                 | `a`                     |
+| Change the key or the color | **Edit**                                | `e`, `Enter`            |
+| Delete a color              | **Delete**                              | `d`, `Delete`           |
+| Scroll a large image        | Wheel; `Shift`+wheel scrolls sideways   | Arrow keys              |
+| Save the file               | **Save**                                | `Ctrl+S`                |
+| Quit                        | **Quit**                                | `q`, `Ctrl+Q`           |
+
+In the Add and Edit dialogs, type the color as `#RRGGBB` or `#RRGGBBAA`.
+`#RRGGBB` gets the alpha `FF`. Use `Tab` to go to the other field, `Enter` to
+accept, and `Esc` to cancel. A new color for an entry changes all the pixels
+that use it.
+
+If pixels use a color that you delete, the dialog asks for a replacement
+key. The pixels change to that key. The dialog proposes the first fully
+transparent color.
+
+After each save, a dialog gives the result: the number of bytes and the path,
+or the cause of the failure. The editor reads the file again after it writes
+it, so a success means that the file has the new text. Close the dialog with
+**OK**, `Enter`, or `Esc`.
+
+Quit always asks for confirmation:
+
+- With no unsaved changes, select **Quit** (`y`) or **Cancel** (`n`, `Esc`).
+- With unsaved changes, select **Save and quit** (`s`), **Discard** (`d`), or
+  **Cancel** (`Esc`). If the save fails, the editor stays open and shows the
+  failure. After a save and quit, `pxl` prints the save result in the
+  terminal.
+
+When the editor saves, it writes each palette line as `<key> - #RRGGBBAA`
+with uppercase digits, and one blank line before the pixel rows. The palette
+order and the pixel data do not change.
 
 ## Tasks
 
@@ -168,6 +243,10 @@ Draw a treasure chest. quality: polished, style: 16-bit, colors: 12, size: 32x32
 `quality` sets how many stages and critique passes the agent does. Each style
 sets default values for the other options. An option that you give has
 priority over the style.
+
+If you give no options, the agent interviews you first. It asks about the
+style, quality, size, and view in one round, and it recommends a default for
+each. Tell the agent "use the defaults" to skip the interview.
 
 ### Install the skill
 
