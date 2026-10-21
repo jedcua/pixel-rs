@@ -1,24 +1,26 @@
 //! Drawing of the editor screen.
 
-use pxl::Rgba;
+use pxl::{CHECKER, Rgba};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Layout, Position, Rect};
+use ratatui::layout::{Constraint, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
-use super::app::{Action, Alert, App, Dialog, Screen};
-use super::form::{EntryForm, Field, RemoveForm, parse_color};
+use super::app::{Action, Alert, App, Dialog, Hit, Screen};
+use super::form::{EntryForm, Field, RemoveForm};
 
 /// Width of the palette panel, with its border.
 const PANEL_WIDTH: u16 = 24;
-/// The two colors of the checkerboard behind transparent pixels.
-const CHECKER: [[u8; 3]; 2] = [[0xFF, 0xFF, 0xFF], [0xCC, 0xCC, 0xCC]];
 /// Columns between two buttons.
 const BUTTON_GAP: u16 = 1;
 /// Width of a dialog, with its border. The longest message must fit.
 const DIALOG_WIDTH: u16 = 60;
+/// Width of the value of a text field. The longest value is a color text.
+const FIELD_WIDTH: usize = 9;
+/// The label of the color field.
+const COLOR_LABEL: &str = "Color: ";
 
 const BUTTON: Style = Style::new()
     .fg(Color::Black)
@@ -28,6 +30,23 @@ const SELECTED: Style = Style::new().add_modifier(Modifier::REVERSED);
 const MUTED: Style = Style::new().fg(Color::DarkGray);
 const ERROR: Style = Style::new().fg(Color::LightRed);
 const SUCCESS: Style = Style::new().fg(Color::LightGreen);
+
+/// A button label and the action that the button runs.
+#[derive(Clone, Copy)]
+struct Button<'a> {
+    label: &'a str,
+    action: Action,
+}
+
+impl<'a> Button<'a> {
+    const fn new(label: &'a str, action: Action) -> Self {
+        Button { label, action }
+    }
+
+    fn width(&self) -> u16 {
+        u16::try_from(self.label.chars().count() + 2).unwrap_or(u16::MAX)
+    }
+}
 
 /// Draws the editor and returns the screen areas for mouse input.
 pub fn draw(frame: &mut Frame, app: &App) -> Screen {
@@ -53,13 +72,21 @@ pub fn draw(frame: &mut Frame, app: &App) -> Screen {
 }
 
 /// Draws the file name and the Save and Quit buttons.
-fn draw_top_bar(frame: &mut Frame, area: Rect, app: &App, hits: &mut Vec<(Rect, Action)>) {
+fn draw_top_bar(frame: &mut Frame, area: Rect, app: &App, hits: &mut Vec<Hit>) {
     let changed = if app.modified { " [modified]" } else { "" };
-    let (width, height) = (app.document.width(), app.document.height());
-    let title = format!(" pxl  {}{changed}  {width}x{height}", app.path.display());
+    let size = app.image_size();
+    let title = format!(
+        " pxl  {}{changed}  {}x{}",
+        app.path.display(),
+        size.width,
+        size.height
+    );
     frame.render_widget(Paragraph::new(title).style(MUTED), area);
 
-    let buttons = [("Save", Action::Save), ("Quit", Action::Quit)];
+    let buttons = [
+        Button::new("Save", Action::Save),
+        Button::new("Quit", Action::Quit),
+    ];
     let start = area.right().saturating_sub(buttons_width(&buttons) + 1);
     draw_buttons(frame, Position::new(start, area.y), &buttons, hits);
 }
@@ -70,14 +97,14 @@ fn draw_canvas(frame: &mut Frame, area: Rect, app: &App) -> Rect {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let view = super::geometry::Viewport::new(inner, size(app), app.scroll);
+    let view = app.viewport_in(inner);
     let buffer = frame.buffer_mut();
     for dy in 0..view.rows {
         for dx in 0..view.columns {
-            let (x, y) = (view.first_x + dx, view.first_y + dy);
+            let (x, y) = (view.first.x + dx, view.first.y + dy);
             let color = app.document.palette()[app.document.pixel(x, y)].color;
             let (column, row) = view.screen_of(dx, dy);
-            let fill = to_color(blend(color, CHECKER[((x + y) % 2) as usize]));
+            let fill = color.over(CHECKER[((x + y) % 2) as usize]);
             paint_cells(buffer, Position::new(column, row), [fill, fill]);
         }
     }
@@ -85,7 +112,7 @@ fn draw_canvas(frame: &mut Frame, area: Rect, app: &App) -> Rect {
 }
 
 /// Draws the palette list and the Add, Edit, and Delete buttons.
-fn draw_palette(frame: &mut Frame, area: Rect, app: &App, hits: &mut Vec<(Rect, Action)>) {
+fn draw_palette(frame: &mut Frame, area: Rect, app: &App, hits: &mut Vec<Hit>) {
     let count = app.document.palette().len();
     let block = Block::bordered().title(format!(" Palette ({count}) "));
     let inner = block.inner(area);
@@ -98,13 +125,16 @@ fn draw_palette(frame: &mut Frame, area: Rect, app: &App, hits: &mut Vec<(Rect, 
     for (row, index) in (list.y..list.bottom()).zip(first..count) {
         let row_area = Rect::new(list.x, row, list.width, 1);
         draw_palette_row(frame, row_area, app, index);
-        hits.push((row_area, Action::Select(index)));
+        hits.push(Hit {
+            area: row_area,
+            action: Action::Select(index),
+        });
     }
 
     let actions = [
-        ("Add", Action::Add),
-        ("Edit", Action::Edit),
-        ("Delete", Action::Remove),
+        Button::new("Add", Action::Add),
+        Button::new("Edit", Action::Edit),
+        Button::new("Delete", Action::Remove),
     ];
     draw_buttons(frame, buttons.as_position(), &actions, hits);
 }
@@ -130,9 +160,9 @@ fn draw_palette_row(frame: &mut Frame, area: Rect, app: &App, index: usize) {
 /// Draws the pixel below the pointer, the selected color, and a message.
 fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
     let entry = app.document.palette()[app.selected];
-    let pointer = app.hover.map_or_else(String::new, |(x, y)| {
-        let key = app.document.palette()[app.document.pixel(x, y)].key;
-        format!("x {x}, y {y}: {key}  |  ")
+    let pointer = app.hover.map_or_else(String::new, |pixel| {
+        let key = app.document.palette()[app.document.pixel(pixel.x, pixel.y)].key;
+        format!("x {}, y {}: {key}  |  ", pixel.x, pixel.y)
     });
     let usage = app.document.usage(app.selected);
     let message = app
@@ -146,7 +176,7 @@ fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(text).style(MUTED), area);
 }
 
-fn draw_dialog(frame: &mut Frame, dialog: &Dialog, app: &App, hits: &mut Vec<(Rect, Action)>) {
+fn draw_dialog(frame: &mut Frame, dialog: &Dialog, app: &App, hits: &mut Vec<Hit>) {
     match dialog {
         Dialog::Entry(form) => draw_entry_dialog(frame, form, app, hits),
         Dialog::Remove(form) => draw_remove_dialog(frame, form, app, hits),
@@ -155,12 +185,7 @@ fn draw_dialog(frame: &mut Frame, dialog: &Dialog, app: &App, hits: &mut Vec<(Re
     }
 }
 
-fn draw_entry_dialog(
-    frame: &mut Frame,
-    form: &EntryForm,
-    app: &App,
-    hits: &mut Vec<(Rect, Action)>,
-) {
+fn draw_entry_dialog(frame: &mut Frame, form: &EntryForm, app: &App, hits: &mut Vec<Hit>) {
     let title = match form.index {
         None => " Add color ".to_string(),
         Some(index) => format!(" Edit color `{}` ", app.document.palette()[index].key),
@@ -169,39 +194,40 @@ fn draw_entry_dialog(
     let key = form.key.map(String::from).unwrap_or_default();
     let fields = [
         (Field::Key, "Key:   ", key),
-        (Field::Color, "Color: ", form.color.clone()),
+        (Field::Color, COLOR_LABEL, form.color.clone()),
     ];
     for (row, (field, label, value)) in (inner.y..).zip(fields) {
         let area = Rect::new(inner.x, row, inner.width, 1);
-        draw_field(frame, area, (label, &value), form.field == field);
-        hits.push((area, Action::Focus(field)));
+        let text = TextField {
+            label,
+            value: &value,
+            active: form.field == field,
+        };
+        draw_field(frame, area, &text);
+        hits.push(Hit {
+            area,
+            action: Action::Focus(field),
+        });
     }
-    if let Some(color) = parse_color(&form.color) {
-        let column = inner.x + 7 + 11;
+    if let Some(color) = Rgba::from_lenient_hex(&form.color) {
         paint_swatch(
             frame.buffer_mut(),
-            Position::new(column, inner.y + 1),
+            Position::new(inner.x + field_end(COLOR_LABEL) + 2, inner.y + 1),
             color,
         );
     }
     let hint = "Type #RRGGBB or #RRGGBBAA. Tab: next field.";
     draw_line(frame, inner, 3, Span::styled(hint, MUTED));
     draw_error(frame, inner, form.error.as_deref());
-    let buttons = [("OK", Action::Submit), ("Cancel", Action::Close)];
-    draw_buttons(
-        frame,
-        Position::new(inner.x, inner.bottom() - 1),
-        &buttons,
-        hits,
-    );
+    let buttons = [
+        Button::new("OK", Action::Submit),
+        Button::new("Cancel", Action::Close),
+    ];
+    let start = Position::new(inner.x, inner.bottom() - 1);
+    draw_buttons(frame, start, &buttons, hits);
 }
 
-fn draw_remove_dialog(
-    frame: &mut Frame,
-    form: &RemoveForm,
-    app: &App,
-    hits: &mut Vec<(Rect, Action)>,
-) {
+fn draw_remove_dialog(frame: &mut Frame, form: &RemoveForm, app: &App, hits: &mut Vec<Hit>) {
     let key = app.document.palette()[form.index].key;
     let inner = open_dialog(frame, &format!(" Delete color `{key}` "), 7);
     if form.usage == 0 {
@@ -211,36 +237,43 @@ fn draw_remove_dialog(
         draw_line(frame, inner, 0, Span::raw(text));
         let replacement = form.replacement.map(String::from).unwrap_or_default();
         let area = Rect::new(inner.x, inner.y + 1, inner.width, 1);
-        draw_field(frame, area, ("Replace with key: ", &replacement), true);
+        let field = TextField {
+            label: "Replace with key: ",
+            value: &replacement,
+            active: true,
+        };
+        draw_field(frame, area, &field);
         let hint = "Type a palette key.";
         draw_line(frame, inner, 3, Span::styled(hint, MUTED));
     }
     draw_error(frame, inner, form.error.as_deref());
-    let buttons = [("Delete", Action::Submit), ("Cancel", Action::Close)];
-    draw_buttons(
-        frame,
-        Position::new(inner.x, inner.bottom() - 1),
-        &buttons,
-        hits,
-    );
+    let buttons = [
+        Button::new("Delete", Action::Submit),
+        Button::new("Cancel", Action::Close),
+    ];
+    let start = Position::new(inner.x, inner.bottom() - 1);
+    draw_buttons(frame, start, &buttons, hits);
 }
 
-fn draw_quit_dialog(frame: &mut Frame, unsaved: bool, hits: &mut Vec<(Rect, Action)>) {
-    let (title, text, buttons): (_, _, &[(&str, Action)]) = if unsaved {
+fn draw_quit_dialog(frame: &mut Frame, unsaved: bool, hits: &mut Vec<Hit>) {
+    let (title, text, buttons): (_, _, &[Button]) = if unsaved {
         (
             " Unsaved changes ",
             "Save the changes before you quit?",
             &[
-                ("Save and quit (s)", Action::SaveAndQuit),
-                ("Discard (d)", Action::Exit),
-                ("Cancel", Action::Close),
+                Button::new("Save and quit (s)", Action::SaveAndQuit),
+                Button::new("Discard (d)", Action::Discard),
+                Button::new("Cancel", Action::Close),
             ],
         )
     } else {
         (
             " Quit ",
             "Quit the editor?",
-            &[("Quit (y)", Action::Exit), ("Cancel (n)", Action::Close)],
+            &[
+                Button::new("Quit (y)", Action::Discard),
+                Button::new("Cancel (n)", Action::Close),
+            ],
         )
     };
     let inner = open_dialog(frame, title, 4);
@@ -251,7 +284,7 @@ fn draw_quit_dialog(frame: &mut Frame, unsaved: bool, hits: &mut Vec<(Rect, Acti
 
 /// Draws the result of a save, with an OK button. The text wraps, so that a
 /// long path stays visible.
-fn draw_alert(frame: &mut Frame, alert: &Alert, hits: &mut Vec<(Rect, Action)>) {
+fn draw_alert(frame: &mut Frame, alert: &Alert, hits: &mut Vec<Hit>) {
     let inner = open_dialog(frame, &alert.title, 5);
     let style = if alert.error { ERROR } else { SUCCESS };
     let text_area = Rect::new(inner.x, inner.y, inner.width, inner.height - 2);
@@ -260,7 +293,7 @@ fn draw_alert(frame: &mut Frame, alert: &Alert, hits: &mut Vec<(Rect, Action)>) 
         .wrap(Wrap { trim: false });
     frame.render_widget(text, text_area);
     let start = Position::new(inner.x, inner.bottom() - 1);
-    draw_buttons(frame, start, &[("OK", Action::Close)], hits);
+    draw_buttons(frame, start, &[Button::new("OK", Action::Close)], hits);
 }
 
 /// Clears a centered box with a border and returns its inner area. `height`
@@ -276,18 +309,34 @@ fn open_dialog(frame: &mut Frame, title: &str, height: u16) -> Rect {
         height,
     );
     let block = Block::bordered().title(title.to_string());
-    let inner = block.inner(outer).inner(ratatui::layout::Margin::new(1, 0));
+    let inner = block.inner(outer).inner(Margin::new(1, 0));
     frame.render_widget(Clear, outer);
     frame.render_widget(block, outer);
     inner
 }
 
-/// Draws a text field: a label and a value. The active field shows the cursor.
-fn draw_field(frame: &mut Frame, area: Rect, (label, value): (&str, &str), active: bool) {
+/// Returns the column offset of the end of the value of a field with `label`.
+fn field_end(label: &str) -> u16 {
+    u16::try_from(label.len() + FIELD_WIDTH).unwrap_or(u16::MAX)
+}
+
+/// A text field: a label and a value. The active field shows the cursor.
+struct TextField<'a> {
+    label: &'a str,
+    value: &'a str,
+    active: bool,
+}
+
+fn draw_field(frame: &mut Frame, area: Rect, field: &TextField) {
+    let TextField {
+        label,
+        value,
+        active,
+    } = *field;
     let style = if active { SELECTED } else { Style::new() };
     let line = Line::from(vec![
         Span::raw(label),
-        Span::styled(format!("{value:<9}"), style),
+        Span::styled(format!("{value:<FIELD_WIDTH$}"), style),
     ]);
     frame.render_widget(Paragraph::new(line), area);
     if active {
@@ -311,67 +360,39 @@ fn draw_line(frame: &mut Frame, inner: Rect, row: u16, span: Span) {
 }
 
 /// Draws a row of buttons that starts at `start`, and records their areas.
-fn draw_buttons(
-    frame: &mut Frame,
-    start: Position,
-    buttons: &[(&str, Action)],
-    hits: &mut Vec<(Rect, Action)>,
-) {
+fn draw_buttons(frame: &mut Frame, start: Position, buttons: &[Button], hits: &mut Vec<Hit>) {
     let mut column = start.x;
-    for &(label, action) in buttons {
-        let width = button_width(label);
+    for button in buttons {
+        let width = button.width();
         let area = Rect::new(column, start.y, width, 1).intersection(frame.area());
-        frame.render_widget(Paragraph::new(format!(" {label} ")).style(BUTTON), area);
-        hits.push((area, action));
+        let text = format!(" {} ", button.label);
+        frame.render_widget(Paragraph::new(text).style(BUTTON), area);
+        hits.push(Hit {
+            area,
+            action: button.action,
+        });
         column += width + BUTTON_GAP;
     }
 }
 
-fn buttons_width(buttons: &[(&str, Action)]) -> u16 {
+fn buttons_width(buttons: &[Button]) -> u16 {
     let gaps = u16::try_from(buttons.len().saturating_sub(1)).unwrap_or(0) * BUTTON_GAP;
-    buttons
-        .iter()
-        .map(|(label, _)| button_width(label))
-        .sum::<u16>()
-        + gaps
-}
-
-fn button_width(label: &str) -> u16 {
-    u16::try_from(label.chars().count() + 2).unwrap_or(u16::MAX)
+    buttons.iter().map(Button::width).sum::<u16>() + gaps
 }
 
 /// Draws a swatch of two cells. The left cell shows the color over the light
 /// checker color and the right cell over the dark one, so that transparency
 /// is visible.
 fn paint_swatch(buffer: &mut Buffer, position: Position, color: Rgba) {
-    let fills = CHECKER.map(|back| to_color(blend(color, back)));
-    paint_cells(buffer, position, fills);
+    paint_cells(buffer, position, CHECKER.map(|back| color.over(back)));
 }
 
 /// Fills the two cells that start at `position` with full blocks.
-fn paint_cells(buffer: &mut Buffer, position: Position, fills: [Color; 2]) {
-    for (offset, fill) in (0..).zip(fills) {
+fn paint_cells(buffer: &mut Buffer, position: Position, fills: [[u8; 3]; 2]) {
+    for (offset, [red, green, blue]) in (0..).zip(fills) {
         if let Some(cell) = buffer.cell_mut(Position::new(position.x + offset, position.y)) {
+            let fill = Color::Rgb(red, green, blue);
             cell.set_char('█').set_fg(fill).set_bg(fill);
         }
     }
-}
-
-fn size(app: &App) -> (u32, u32) {
-    (app.document.width(), app.document.height())
-}
-
-/// Blends `color` over the opaque color `back`.
-fn blend(color: Rgba, back: [u8; 3]) -> [u8; 3] {
-    let [red, green, blue, alpha] = color.0;
-    let alpha = u16::from(alpha);
-    let mix = |front: u8, back: u8| {
-        let value = (u16::from(front) * alpha + u16::from(back) * (255 - alpha) + 127) / 255;
-        u8::try_from(value).expect("blend of two u8 values is a u8")
-    };
-    [mix(red, back[0]), mix(green, back[1]), mix(blue, back[2])]
-}
-
-fn to_color([red, green, blue]: [u8; 3]) -> Color {
-    Color::Rgb(red, green, blue)
 }

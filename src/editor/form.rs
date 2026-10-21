@@ -90,8 +90,8 @@ impl EntryForm {
     /// Returns a message for the user if a field is empty or not valid.
     pub fn entry(&self) -> Result<PaletteEntry, String> {
         let key = self.key.ok_or("Key is empty. Type one char.")?;
-        let color =
-            parse_color(&self.color).ok_or("Color is not valid. Type #RRGGBB or #RRGGBBAA.")?;
+        let color = Rgba::from_lenient_hex(&self.color)
+            .ok_or("Color is not valid. Type #RRGGBB or #RRGGBBAA.")?;
         Ok(PaletteEntry { key, color })
     }
 }
@@ -148,36 +148,12 @@ impl RemoveForm {
     }
 }
 
-/// Parses a color in the form `#RRGGBB` or `#RRGGBBAA`. The `#` is optional.
-/// `#RRGGBB` gets the alpha `FF`.
-pub fn parse_color(text: &str) -> Option<Rgba> {
-    let hex = text.trim();
-    let hex = hex.strip_prefix('#').unwrap_or(hex);
-    match hex.len() {
-        6 => Rgba::from_hex(&format!("#{hex}FF")),
-        8 => Rgba::from_hex(&format!("#{hex}")),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn document() -> Document {
         Document::parse("A - #11223344\n. - #00000000\nC - #FFFFFFFF\n\nA.C\n").unwrap()
-    }
-
-    #[test]
-    fn parse_color_accepts_6_or_8_digits_with_an_optional_hash() {
-        assert_eq!(parse_color("#a1b2c3"), Some(Rgba([0xA1, 0xB2, 0xC3, 0xFF])));
-        assert_eq!(
-            parse_color("A1B2C380"),
-            Some(Rgba([0xA1, 0xB2, 0xC3, 0x80]))
-        );
-        for text in ["", "#", "#12345", "#1234567", "#GGGGGG", "##123456"] {
-            assert_eq!(parse_color(text), None, "{text}");
-        }
     }
 
     #[test]

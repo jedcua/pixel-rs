@@ -11,11 +11,23 @@ const UPPER_HALF: char = '▀';
 const LOWER_HALF: char = '▄';
 const RESET: &str = "\x1b[0m";
 
-/// The foreground and background colors of a char cell. `None` is the
-/// terminal default.
-type Style = (Option<[u8; 3]>, Option<[u8; 3]>);
+/// The colors of a char cell. `None` is the terminal default.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Style {
+    foreground: Option<[u8; 3]>,
+    background: Option<[u8; 3]>,
+}
 
-const DEFAULT_STYLE: Style = (None, None);
+impl Style {
+    const DEFAULT: Style = Style::new(None, None);
+
+    const fn new(foreground: Option<[u8; 3]>, background: Option<[u8; 3]>) -> Self {
+        Style {
+            foreground,
+            background,
+        }
+    }
+}
 
 /// Renders `image` as text for a terminal with 24-bit color. Each char cell
 /// shows two pixels on top of each other: the upper pixel with the
@@ -31,7 +43,7 @@ pub fn render_ansi(image: &Image) -> String {
     let rows: Vec<&[Rgba]> = image.rows().collect();
     for pair in rows.chunks(2) {
         let lower_row = pair.get(1).copied();
-        let mut style = DEFAULT_STYLE;
+        let mut style = Style::DEFAULT;
         for (x, &upper) in pair[0].iter().enumerate() {
             let (glyph, cell_style) = cell(upper, lower_row.map(|row| row[x]));
             if cell_style != style {
@@ -40,7 +52,7 @@ pub fn render_ansi(image: &Image) -> String {
             }
             text.push(glyph);
         }
-        if style != DEFAULT_STYLE {
+        if style != Style::DEFAULT {
             text.push_str(RESET);
         }
         text.push('\n');
@@ -52,9 +64,9 @@ pub fn render_ansi(image: &Image) -> String {
 /// `lower`. The last line of an image with an odd height has no `lower`.
 fn cell(upper: Rgba, lower: Option<Rgba>) -> (char, Style) {
     match (visible(upper), lower.and_then(visible)) {
-        (Some(top), bottom) => (UPPER_HALF, (Some(top), bottom)),
-        (None, Some(bottom)) => (LOWER_HALF, (Some(bottom), None)),
-        (None, None) => (' ', DEFAULT_STYLE),
+        (Some(top), bottom) => (UPPER_HALF, Style::new(Some(top), bottom)),
+        (None, Some(bottom)) => (LOWER_HALF, Style::new(Some(bottom), None)),
+        (None, None) => (' ', Style::DEFAULT),
     }
 }
 
@@ -65,14 +77,14 @@ fn visible(Rgba([red, green, blue, alpha]): Rgba) -> Option<[u8; 3]> {
 
 /// Appends the escape codes that change the style from `old` to `new`.
 fn push_style(text: &mut String, old: Style, new: Style) {
-    if old != DEFAULT_STYLE {
+    if old != Style::DEFAULT {
         text.push_str(RESET);
     }
     // A `String` cannot fail as a `fmt::Write` target.
-    if let Some([red, green, blue]) = new.0 {
+    if let Some([red, green, blue]) = new.foreground {
         let _ = write!(text, "\x1b[38;2;{red};{green};{blue}m");
     }
-    if let Some([red, green, blue]) = new.1 {
+    if let Some([red, green, blue]) = new.background {
         let _ = write!(text, "\x1b[48;2;{red};{green};{blue}m");
     }
 }

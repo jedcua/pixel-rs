@@ -23,5 +23,5 @@ mod render;
 pub use ansi::render_ansi;
 pub use document::{Document, PaletteEntry, PaletteError};
 pub use grid::render_grid;
-pub use parse::{Image, ParseError, ParseErrorKind, Rgba, parse};
+pub use parse::{CHECKER, Image, ParseError, ParseErrorKind, Rgba, parse};
 pub use render::{Canvas, RenderError, render, write_png};

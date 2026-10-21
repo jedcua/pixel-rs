@@ -10,7 +10,7 @@ use ratatui::crossterm::event::{
 use ratatui::layout::{Position, Rect};
 
 use super::form::{EntryForm, Field, RemoveForm};
-use super::geometry::{Viewport, line};
+use super::geometry::{Point, Size, Viewport, line};
 
 /// Number of pixels that one mouse wheel step scrolls.
 const WHEEL_STEP: i64 = 3;
@@ -30,7 +30,7 @@ pub enum Action {
     Close,
     SaveAndQuit,
     /// Quits and does not save.
-    Exit,
+    Discard,
     /// Selects the color of the pixel below the pointer.
     Pick,
 }
@@ -58,13 +58,20 @@ pub struct Alert {
     pub error: bool,
 }
 
+/// A screen area that runs an action when the user clicks it.
+#[derive(Debug, Clone, Copy)]
+pub struct Hit {
+    pub area: Rect,
+    pub action: Action,
+}
+
 /// The screen areas of the last frame, for mouse input.
 #[derive(Debug, Clone, Default)]
 pub struct Screen {
     /// The area inside the canvas border.
     pub canvas: Rect,
     /// The clickable areas. When a dialog is open, only its areas are here.
-    pub hits: Vec<(Rect, Action)>,
+    pub hits: Vec<Hit>,
 }
 
 impl Screen {
@@ -72,30 +79,30 @@ impl Screen {
         let position = Position::new(column, row);
         self.hits
             .iter()
-            .find(|(area, _)| area.contains(position))
-            .map(|&(_, action)| action)
+            .find(|hit| hit.area.contains(position))
+            .map(|hit| hit.action)
     }
 }
 
 pub struct App {
-    pub path: PathBuf,
-    pub document: Document,
+    pub(super) path: PathBuf,
+    pub(super) document: Document,
     /// The palette index that the pen draws with.
-    pub selected: usize,
-    pub modified: bool,
-    /// The image pixel at the top-left corner of the canvas.
-    pub scroll: (u32, u32),
+    pub(super) selected: usize,
+    pub(super) modified: bool,
     /// The image pixel below the mouse pointer.
-    pub hover: Option<(u32, u32)>,
-    pub dialog: Option<Dialog>,
+    pub(super) hover: Option<Point>,
+    pub(super) dialog: Option<Dialog>,
     /// The result of the last command, for the status bar.
-    pub message: Option<String>,
-    pub quit: bool,
+    pub(super) message: Option<String>,
+    /// The image pixel at the top-left corner of the canvas.
+    scroll: Point,
+    quit: bool,
     /// A message to print after the editor closes, for a save and quit.
-    pub exit_note: Option<String>,
+    exit_note: Option<String>,
     screen: Screen,
     /// The last pixel of the current mouse stroke.
-    stroke: Option<(u32, u32)>,
+    stroke: Option<Point>,
 }
 
 impl App {
@@ -105,10 +112,10 @@ impl App {
             document,
             selected: 0,
             modified: false,
-            scroll: (0, 0),
             hover: None,
             dialog: None,
             message: None,
+            scroll: Point::default(),
             quit: false,
             exit_note: None,
             screen: Screen::default(),
@@ -116,16 +123,32 @@ impl App {
         }
     }
 
-    /// Returns the viewport of the canvas in the last frame.
-    pub fn viewport(&self) -> Viewport {
-        Viewport::new(self.screen.canvas, self.size(), self.scroll)
+    /// Returns true after the user quits.
+    pub fn is_done(&self) -> bool {
+        self.quit
+    }
+
+    /// Returns the message to print after the editor closes.
+    pub fn exit_note(&self) -> Option<&str> {
+        self.exit_note.as_deref()
+    }
+
+    pub fn image_size(&self) -> Size {
+        Size {
+            width: self.document.width(),
+            height: self.document.height(),
+        }
+    }
+
+    /// Returns the viewport of the image in the canvas `area`.
+    pub fn viewport_in(&self, area: Rect) -> Viewport {
+        Viewport::new(area, self.image_size(), self.scroll)
     }
 
     /// Stores the screen areas of a new frame.
     pub fn set_screen(&mut self, screen: Screen) {
         self.screen = screen;
-        let view = self.viewport();
-        self.scroll = (view.first_x, view.first_y);
+        self.scroll = self.viewport().first;
     }
 
     pub fn handle(&mut self, event: &Event) {
@@ -142,22 +165,32 @@ impl App {
             Action::Save => {
                 self.save();
             }
-            Action::Quit => self.request_quit(),
-            Action::Add => self.open_add(),
-            Action::Edit => self.open_edit(),
+            Action::Quit => {
+                self.dialog = Some(Dialog::Quit {
+                    unsaved: self.modified,
+                });
+            }
+            Action::Add => {
+                let form = EntryForm::add(&self.document, self.selected);
+                self.dialog = Some(Dialog::Entry(form));
+            }
+            Action::Edit => {
+                let form = EntryForm::edit(&self.document, self.selected);
+                self.dialog = Some(Dialog::Entry(form));
+            }
             Action::Remove => self.open_remove(),
             Action::Select(index) => self.selected = index,
             Action::Focus(field) => self.focus(field),
             Action::Submit => self.submit(),
             Action::Close => self.dialog = None,
             Action::SaveAndQuit => self.save_and_quit(),
-            Action::Exit => self.quit = true,
+            Action::Discard => self.quit = true,
             Action::Pick => self.pick(self.hover),
         }
     }
 
-    fn size(&self) -> (u32, u32) {
-        (self.document.width(), self.document.height())
+    fn viewport(&self) -> Viewport {
+        self.viewport_in(self.screen.canvas)
     }
 
     fn key(&mut self, key: &KeyEvent) {
@@ -176,21 +209,16 @@ impl App {
     }
 
     fn navigate_key(&mut self, code: KeyCode) {
-        let count = i64::try_from(self.document.palette().len()).unwrap_or(i64::MAX);
-        let selected = i64::try_from(self.selected).unwrap_or(0);
+        let count = self.document.palette().len();
         match code {
-            KeyCode::Tab => self.select((selected + 1).rem_euclid(count)),
-            KeyCode::BackTab => self.select((selected - 1).rem_euclid(count)),
+            KeyCode::Tab => self.selected = (self.selected + 1) % count,
+            KeyCode::BackTab => self.selected = (self.selected + count - 1) % count,
             KeyCode::Left => self.scroll_by(-1, 0),
             KeyCode::Right => self.scroll_by(1, 0),
             KeyCode::Up => self.scroll_by(0, -1),
             KeyCode::Down => self.scroll_by(0, 1),
             _ => {}
         }
-    }
-
-    fn select(&mut self, index: i64) {
-        self.selected = usize::try_from(index).unwrap_or(0);
     }
 
     fn mouse(&mut self, mouse: MouseEvent) {
@@ -244,13 +272,13 @@ impl App {
 
     /// Selects the color of `pixel`, so that the pen draws with it. A dialog
     /// gets all the input, so this does nothing while a dialog is open.
-    fn pick(&mut self, pixel: Option<(u32, u32)>) {
-        if let (Some((x, y)), None) = (pixel, &self.dialog) {
+    fn pick(&mut self, pixel: Option<Point>) {
+        if let (Some(Point { x, y }), None) = (pixel, &self.dialog) {
             self.selected = self.document.pixel(x, y);
         }
     }
 
-    fn paint(&mut self, (x, y): (u32, u32)) {
+    fn paint(&mut self, Point { x, y }: Point) {
         if self.document.set_pixel(x, y, self.selected) {
             self.modified = true;
         }
@@ -260,17 +288,16 @@ impl App {
         let shift = |value: u32, delta: i64| {
             u32::try_from((i64::from(value) + delta).max(0)).unwrap_or(u32::MAX)
         };
-        let scroll = (shift(self.scroll.0, dx), shift(self.scroll.1, dy));
-        let view = Viewport::new(self.screen.canvas, self.size(), scroll);
-        self.scroll = (view.first_x, view.first_y);
+        let scroll = Point::new(shift(self.scroll.x, dx), shift(self.scroll.y, dy));
+        self.scroll = Viewport::new(self.screen.canvas, self.image_size(), scroll).first;
     }
 
     /// Writes the document to its file, and opens an alert with the result.
     /// Returns true if the save succeeds.
     fn save(&mut self) -> bool {
         let text = self.document.to_pxl();
-        let result = write_and_check(&self.path, &text);
-        let alert = match &result {
+        let outcome = write_and_check(&self.path, &text);
+        let alert = match &outcome {
             Ok(()) => {
                 self.modified = false;
                 let bytes = text.len();
@@ -289,7 +316,7 @@ impl App {
             },
         };
         self.dialog = Some(Dialog::Alert(alert));
-        result.is_ok()
+        outcome.is_ok()
     }
 
     /// Saves and quits. If the save fails, the editor stays open and shows
@@ -299,22 +326,6 @@ impl App {
             self.exit_note = self.message.take();
             self.quit = true;
         }
-    }
-
-    fn request_quit(&mut self) {
-        self.dialog = Some(Dialog::Quit {
-            unsaved: self.modified,
-        });
-    }
-
-    fn open_add(&mut self) {
-        let form = EntryForm::add(&self.document, self.selected);
-        self.dialog = Some(Dialog::Entry(form));
-    }
-
-    fn open_edit(&mut self) {
-        let form = EntryForm::edit(&self.document, self.selected);
-        self.dialog = Some(Dialog::Entry(form));
     }
 
     fn open_remove(&mut self) {
@@ -332,17 +343,23 @@ impl App {
         }
     }
 
+    /// Applies the open form. A form that fails stays open and shows the
+    /// error.
     fn submit(&mut self) {
-        let result = match &self.dialog {
-            Some(Dialog::Entry(form)) => self.submit_entry(&form.clone()),
-            Some(Dialog::Remove(form)) => self.submit_remove(&form.clone()),
-            Some(Dialog::Quit { .. } | Dialog::Alert(_)) | None => return,
-        };
-        match (result, &mut self.dialog) {
-            (Ok(()), _) => self.dialog = None,
-            (Err(error), Some(Dialog::Entry(form))) => form.error = Some(error),
-            (Err(error), Some(Dialog::Remove(form))) => form.error = Some(error),
-            (Err(_), _) => {}
+        match self.dialog.take() {
+            Some(Dialog::Entry(mut form)) => {
+                if let Err(error) = self.submit_entry(&form) {
+                    form.error = Some(error);
+                    self.dialog = Some(Dialog::Entry(form));
+                }
+            }
+            Some(Dialog::Remove(mut form)) => {
+                if let Err(error) = self.submit_remove(&form) {
+                    form.error = Some(error);
+                    self.dialog = Some(Dialog::Remove(form));
+                }
+            }
+            other => self.dialog = other,
         }
     }
 
@@ -352,21 +369,17 @@ impl App {
             Some(index) => self.document.set_entry(index, entry).map(|()| index),
             None => self.document.add_entry(entry),
         };
-        self.selected = index.map_err(|err| capitalize(&err.to_string()))?;
+        self.selected = index.map_err(|err| err.to_string())?;
         self.modified = true;
         Ok(())
     }
 
     fn submit_remove(&mut self, form: &RemoveForm) -> Result<(), String> {
         let replacement = form.replacement_index(&self.document)?;
-        self.document
+        self.selected = self
+            .document
             .remove_entry(form.index, replacement)
-            .map_err(|err| capitalize(&err.to_string()))?;
-        self.selected = if replacement > form.index {
-            replacement - 1
-        } else {
-            replacement
-        };
+            .map_err(|err| err.to_string())?;
         self.modified = true;
         Ok(())
     }
@@ -377,7 +390,6 @@ fn main_key(key: &KeyEvent) -> Option<Action> {
     let control = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Char('s') if control => Some(Action::Save),
-        KeyCode::Char('q') if control => Some(Action::Quit),
         KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Char('a') => Some(Action::Add),
         KeyCode::Char('e') | KeyCode::Enter => Some(Action::Edit),
@@ -391,8 +403,8 @@ fn main_key(key: &KeyEvent) -> Option<Action> {
 fn quit_key(unsaved: bool, key: &KeyEvent) -> Option<Action> {
     match key.code {
         KeyCode::Char('s') if unsaved => Some(Action::SaveAndQuit),
-        KeyCode::Char('d') if unsaved => Some(Action::Exit),
-        KeyCode::Enter | KeyCode::Char('q' | 'y') if !unsaved => Some(Action::Exit),
+        KeyCode::Char('d') if unsaved => Some(Action::Discard),
+        KeyCode::Enter | KeyCode::Char('q' | 'y') if !unsaved => Some(Action::Discard),
         KeyCode::Esc | KeyCode::Char('n') => Some(Action::Close),
         _ => None,
     }
@@ -448,14 +460,6 @@ fn remove_key(form: &mut RemoveForm, key: &KeyEvent) -> Option<Action> {
     }
     form.error = None;
     None
-}
-
-/// Makes the first char uppercase and ends the text with a period, so that a
-/// library error reads as a status message.
-fn capitalize(text: &str) -> String {
-    let mut chars = text.chars();
-    let first = chars.next().map(|first| first.to_uppercase().to_string());
-    format!("{}{}.", first.unwrap_or_default(), chars.as_str())
 }
 
 #[cfg(test)]

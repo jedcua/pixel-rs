@@ -6,6 +6,9 @@ use std::iter::Peekable;
 
 use crate::document::{Document, PaletteEntry};
 
+/// The two colors of the checkerboard that shows behind transparent pixels.
+pub const CHECKER: [[u8; 3]; 2] = [[0xFF, 0xFF, 0xFF], [0xCC, 0xCC, 0xCC]];
+
 /// One RGBA color, 8 bits per channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rgba(pub [u8; 4]);
@@ -22,6 +25,32 @@ impl Rgba {
         }
         let value = u32::from_str_radix(hex, 16).ok()?;
         Some(Rgba(value.to_be_bytes()))
+    }
+
+    /// Like [`Rgba::from_hex`], but the `#` is optional and the alpha
+    /// digits are optional. `RRGGBB` gets the alpha `FF`.
+    #[must_use]
+    pub fn from_lenient_hex(text: &str) -> Option<Self> {
+        let hex = text.trim();
+        let hex = hex.strip_prefix('#').unwrap_or(hex);
+        match hex.len() {
+            6 => Self::from_hex(&format!("#{hex}FF")),
+            8 => Self::from_hex(&format!("#{hex}")),
+            _ => None,
+        }
+    }
+
+    /// Returns the RGB color that results when this color is drawn over the
+    /// opaque color `back`.
+    #[must_use]
+    pub fn over(self, back: [u8; 3]) -> [u8; 3] {
+        let [red, green, blue, alpha] = self.0;
+        let alpha = u32::from(alpha);
+        let mix = |front: u8, back: u8| {
+            let value = (u32::from(front) * alpha + u32::from(back) * (255 - alpha) + 127) / 255;
+            u8::try_from(value).unwrap_or(u8::MAX)
+        };
+        [mix(red, back[0]), mix(green, back[1]), mix(blue, back[2])]
     }
 }
 
@@ -190,19 +219,25 @@ impl std::error::Error for ParseError {}
 /// Returns a [`ParseError`] with the line, the column, and the cause if the
 /// source is not a valid `.pxl` file.
 pub fn parse(source: &str) -> Result<Image, ParseError> {
-    parse_document(source).map(|document| document.to_image())
+    Document::parse(source).map(|document| document.to_image())
 }
 
-/// Parses `.pxl` source text into a [`Document`].
-pub(crate) fn parse_document(source: &str) -> Result<Document, ParseError> {
-    let mut lines = source
-        .lines()
-        .enumerate()
-        .map(|(index, line)| (index + 1, line.trim_end()))
-        .skip_while(|(_, line)| line.is_empty())
-        .peekable();
-    let palette = parse_palette(&mut lines)?;
-    parse_pixels(lines.skip_while(|(_, line)| line.is_empty()), palette)
+impl Document {
+    /// Parses `.pxl` source text.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ParseError`] if the source is not a valid `.pxl` file.
+    pub fn parse(source: &str) -> Result<Self, ParseError> {
+        let mut lines = source
+            .lines()
+            .enumerate()
+            .map(|(index, line)| (index + 1, line.trim_end()))
+            .skip_while(|(_, line)| line.is_empty())
+            .peekable();
+        let palette = parse_palette(&mut lines)?;
+        parse_pixels(lines.skip_while(|(_, line)| line.is_empty()), palette)
+    }
 }
 
 /// A source line, trimmed at the end, with its 1-based line number.
@@ -334,6 +369,21 @@ mod tests {
 
     fn kind(source: &str) -> ParseErrorKind {
         parse(source).unwrap_err().kind
+    }
+
+    #[test]
+    fn lenient_hex_accepts_6_or_8_digits_with_an_optional_hash() {
+        assert_eq!(
+            Rgba::from_lenient_hex("#a1b2c3"),
+            Some(Rgba([0xA1, 0xB2, 0xC3, 0xFF]))
+        );
+        assert_eq!(
+            Rgba::from_lenient_hex("A1B2C380"),
+            Some(Rgba([0xA1, 0xB2, 0xC3, 0x80]))
+        );
+        for text in ["", "#", "#12345", "#1234567", "#GGGGGG", "##123456"] {
+            assert_eq!(Rgba::from_lenient_hex(text), None, "{text}");
+        }
     }
 
     #[test]

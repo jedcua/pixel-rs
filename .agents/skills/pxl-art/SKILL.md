@@ -1,6 +1,6 @@
 ---
 name: pxl-art
-description: Draw or improve pixel art in the .pxl text format with the loop of a pixel artist - draw, look, refine. Accepts options for quality, style, color count, palette, size, outline, shading, light, background, and view. Use this skill when the user asks you to create, change, or improve a .pxl file or pixel art.
+description: Draw or improve pixel art in the .pxl text format with the loop of a pixel artist - draw, look, refine. Accepts options for quality, style, color count, palette, size, outline, shading, light, background, and view. If the request gives no options, interviews the user about them first. Use this skill when the user asks you to create, change, or improve a .pxl file or pixel art.
 ---
 
 # Pixel art in `.pxl`
@@ -41,12 +41,33 @@ Draw a treasure chest. quality: polished, style: 16-bit, colors: 12, size: 32x32
 
 Resolve the options in the [Brief](#1-brief) stage:
 
-1. Use each option that the user gives.
-2. Use the style preset for each option that the user does not give. Then use the defaults in the table.
-3. An option that the user gives has priority over the style preset.
-4. If `palette` is a preset or a list, use only those colors. Then `colors` cannot be more than the palette size.
-5. If two options conflict, choose the option that the user stated more clearly. Tell the user about the conflict.
-6. Before you draw, tell the user the resolved options in one line.
+1. If the request gives no options, [interview the user](#interview). Then use each answer as an option that the user gives.
+2. Use each option that the user gives.
+3. Use the style preset for each option that the user does not give. Then use the defaults in the table.
+4. An option that the user gives has priority over the style preset.
+5. If `palette` is a preset or a list, use only those colors. Then `colors` cannot be more than the palette size.
+6. If two options conflict, choose the option that the user stated more clearly. Tell the user about the conflict.
+7. Before you draw, tell the user the resolved options in one line.
+
+### Interview
+
+Do the interview only if the request gives no options, in words or as `name: value` pairs.
+If the request gives one or more options, do not interview. Resolve the other options as usual.
+
+1. Ask all questions in one round. If your harness has a question tool (for example `ask` or `AskUserQuestion`), use it. If not, ask in a short numbered list.
+2. Ask about these options, in this order: `style`, `quality`, `size`, `view`.
+3. Ask about `palette`, `colors`, `background`, or `light` only if the subject makes them important. An example is a sprite for a game with a fixed palette.
+4. For each question, give 2-5 options with a short description of the effect. Mark the default as the recommended option.
+5. For `size`, recommend the size for the subject type from the [Brief](#1-brief) table.
+6. Do not ask about the subject if the request states it. Ask about the subject only if the request does not state it.
+
+Do not interview in these conditions. Use the defaults, and tell the user your choices:
+
+- The user tells you to choose, for example "surprise me" or "use the defaults".
+- You cannot ask the user, for example because you run as a subagent or in a non-interactive session.
+- The user does not answer a question. Use the default for that option only.
+
+For a change to an existing `.pxl` file, the file gives the size and the palette. Do not ask about them. Ask only about the change, if the request does not make it clear.
 
 ### Quality levels
 
@@ -204,8 +225,8 @@ Do the stages that the [quality level](#quality-levels) requires. [references/TE
 
 ### 1. Brief
 
-Find the subject and the mood. [Resolve the options](#options).
-Ask the user only if a missing fact changes the result a lot. If not, choose, and tell the user your choice.
+Find the subject and the mood. [Resolve the options](#options). If the request gives no options, [interview the user](#interview) first.
+After the options are resolved, ask the user again only if a missing fact changes the result a lot. If not, choose, and tell the user your choice.
 
 If the user does not give `size`, use the size for the subject type:
 

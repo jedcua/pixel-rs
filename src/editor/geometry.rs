@@ -6,6 +6,26 @@ use ratatui::layout::Rect;
 /// tall as it is wide, so two columns make a pixel that is about square.
 pub const CELL_WIDTH: u16 = 2;
 
+/// An image pixel position. The top-left pixel is (0, 0).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Point {
+    pub x: u32,
+    pub y: u32,
+}
+
+impl Point {
+    pub const fn new(x: u32, y: u32) -> Self {
+        Point { x, y }
+    }
+}
+
+/// The size of an image in pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Size {
+    pub width: u32,
+    pub height: u32,
+}
+
 /// The part of the image that a canvas area shows.
 ///
 /// If the image is smaller than the area, the image is centered. If it is
@@ -16,10 +36,8 @@ pub struct Viewport {
     pub left: u16,
     /// Screen row of the first visible pixel.
     pub top: u16,
-    /// Image column of the first visible pixel.
-    pub first_x: u32,
-    /// Image row of the first visible pixel.
-    pub first_y: u32,
+    /// Image position of the first visible pixel.
+    pub first: Point,
     /// Number of visible pixel columns.
     pub columns: u32,
     /// Number of visible pixel rows.
@@ -27,17 +45,16 @@ pub struct Viewport {
 }
 
 impl Viewport {
-    /// Makes the viewport for an image of `size` (width, height) in `area`.
-    /// The scroll position `scroll` (x, y) is clamped so that the viewport
-    /// stays inside the image.
-    pub fn new(area: Rect, size: (u32, u32), scroll: (u32, u32)) -> Self {
-        let horizontal = Axis::new((area.x, area.width), CELL_WIDTH, size.0, scroll.0);
-        let vertical = Axis::new((area.y, area.height), 1, size.1, scroll.1);
+    /// Makes the viewport for an image of `size` in `area`. The scroll
+    /// position `scroll` is clamped so that the viewport stays inside the
+    /// image.
+    pub fn new(area: Rect, size: Size, scroll: Point) -> Self {
+        let horizontal = Axis::new((area.x, area.width), CELL_WIDTH, size.width, scroll.x);
+        let vertical = Axis::new((area.y, area.height), 1, size.height, scroll.y);
         Viewport {
             left: horizontal.screen_start,
             top: vertical.screen_start,
-            first_x: horizontal.first,
-            first_y: vertical.first,
+            first: Point::new(horizontal.first, vertical.first),
             columns: horizontal.count,
             rows: vertical.count,
         }
@@ -45,10 +62,11 @@ impl Viewport {
 
     /// Returns the image pixel at the screen `column` and `row`, or `None` if
     /// the cell does not show a pixel.
-    pub fn pixel_at(&self, column: u16, row: u16) -> Option<(u32, u32)> {
+    pub fn pixel_at(&self, column: u16, row: u16) -> Option<Point> {
         let dx = u32::from(column.checked_sub(self.left)? / CELL_WIDTH);
         let dy = u32::from(row.checked_sub(self.top)?);
-        (dx < self.columns && dy < self.rows).then(|| (self.first_x + dx, self.first_y + dy))
+        (dx < self.columns && dy < self.rows)
+            .then(|| Point::new(self.first.x + dx, self.first.y + dy))
     }
 
     /// Returns the screen column and row of the visible pixel number
@@ -86,15 +104,15 @@ impl Axis {
 
 /// Returns the pixels on the line from `from` to `to`, both included, in
 /// order. A mouse drag skips cells when it is fast. This line fills the gap.
-pub fn line(from: (u32, u32), to: (u32, u32)) -> Vec<(u32, u32)> {
-    let (x0, y0) = (i64::from(from.0), i64::from(from.1));
-    let (x1, y1) = (i64::from(to.0), i64::from(to.1));
+pub fn line(from: Point, to: Point) -> Vec<Point> {
+    let (x0, y0) = (i64::from(from.x), i64::from(from.y));
+    let (x1, y1) = (i64::from(to.x), i64::from(to.y));
     let (dx, dy) = ((x1 - x0).abs(), -(y1 - y0).abs());
     let (step_x, step_y) = ((x1 - x0).signum(), (y1 - y0).signum());
     let (mut x, mut y, mut error) = (x0, y0, dx + dy);
     let mut points = Vec::new();
     loop {
-        points.push((to_u32(x), to_u32(y)));
+        points.push(Point::new(to_u32(x), to_u32(y)));
         if x == x1 && y == y1 {
             return points;
         }
@@ -122,36 +140,45 @@ mod tests {
 
     #[test]
     fn centers_a_small_image_and_maps_cells_to_pixels() {
-        let view = Viewport::new(Rect::new(10, 5, 20, 8), (4, 2), (9, 9));
-        assert_eq!(
-            (view.left, view.top, view.first_x, view.first_y),
-            (16, 8, 0, 0)
-        );
-        assert_eq!(view.pixel_at(16, 8), Some((0, 0)));
-        assert_eq!(view.pixel_at(23, 9), Some((3, 1)));
+        let size = Size {
+            width: 4,
+            height: 2,
+        };
+        let view = Viewport::new(Rect::new(10, 5, 20, 8), size, Point::new(9, 9));
+        assert_eq!((view.left, view.top, view.first), (16, 8, Point::new(0, 0)));
+        assert_eq!(view.pixel_at(16, 8), Some(Point::new(0, 0)));
+        assert_eq!(view.pixel_at(23, 9), Some(Point::new(3, 1)));
         assert_eq!(view.pixel_at(24, 9), None);
         assert_eq!(view.pixel_at(15, 8), None);
     }
 
     #[test]
     fn clamps_the_scroll_of_a_large_image() {
-        let view = Viewport::new(Rect::new(0, 0, 20, 10), (80, 95), (200, 3));
+        let size = Size {
+            width: 80,
+            height: 95,
+        };
+        let view = Viewport::new(Rect::new(0, 0, 20, 10), size, Point::new(200, 3));
         assert_eq!(
-            (view.first_x, view.first_y, view.columns, view.rows),
-            (70, 3, 10, 10)
+            (view.first, view.columns, view.rows),
+            (Point::new(70, 3), 10, 10)
         );
-        assert_eq!(view.pixel_at(19, 9), Some((79, 12)));
+        assert_eq!(view.pixel_at(19, 9), Some(Point::new(79, 12)));
         assert_eq!(view.screen_of(9, 9), (18, 9));
     }
 
     #[test]
     fn line_includes_both_ends_and_has_no_gaps() {
-        assert_eq!(line((2, 2), (2, 2)), [(2, 2)]);
-        assert_eq!(line((3, 1), (0, 0)), [(3, 1), (2, 1), (1, 0), (0, 0)]);
-        let points = line((0, 0), (2, 5));
+        let point = |x, y| Point::new(x, y);
+        assert_eq!(line(point(2, 2), point(2, 2)), [point(2, 2)]);
+        assert_eq!(
+            line(point(3, 1), point(0, 0)),
+            [point(3, 1), point(2, 1), point(1, 0), point(0, 0)]
+        );
+        let points = line(point(0, 0), point(2, 5));
         assert_eq!(
             (points.first(), points.last()),
-            (Some(&(0, 0)), Some(&(2, 5)))
+            (Some(&point(0, 0)), Some(&point(2, 5)))
         );
         assert_eq!(points.len(), 6);
     }

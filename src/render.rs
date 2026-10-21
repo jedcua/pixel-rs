@@ -49,7 +49,7 @@ impl From<png::EncodingError> for RenderError {
 pub struct Canvas {
     pub width: u32,
     pub height: u32,
-    pub data: Vec<u8>,
+    pub rgba: Vec<u8>,
 }
 
 impl Canvas {
@@ -62,7 +62,7 @@ impl Canvas {
         Some(Canvas {
             width,
             height,
-            data: color.repeat(pixels),
+            rgba: color.repeat(pixels),
         })
     }
 
@@ -74,7 +74,7 @@ impl Canvas {
     #[must_use]
     pub fn get(&self, x: u32, y: u32) -> [u8; 4] {
         let index = self.index(x, y);
-        self.data[index..index + 4]
+        self.rgba[index..index + 4]
             .try_into()
             .expect("slice has 4 bytes")
     }
@@ -82,7 +82,7 @@ impl Canvas {
     /// Sets the pixel at (`x`, `y`) to `color`.
     pub(crate) fn set(&mut self, x: u32, y: u32, color: [u8; 4]) {
         let index = self.index(x, y);
-        self.data[index..index + 4].copy_from_slice(&color);
+        self.rgba[index..index + 4].copy_from_slice(&color);
     }
 
     fn index(&self, x: u32, y: u32) -> usize {
@@ -126,7 +126,7 @@ pub fn render(image: &Image, scale: NonZeroU32) -> Result<Canvas, RenderError> {
     Ok(Canvas {
         width,
         height,
-        data,
+        rgba: data,
     })
 }
 
@@ -140,7 +140,7 @@ pub fn write_png<W: Write>(canvas: &Canvas, writer: W) -> Result<(), RenderError
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     let mut png_writer = encoder.write_header()?;
-    png_writer.write_image_data(&canvas.data)?;
+    png_writer.write_image_data(&canvas.rgba)?;
     png_writer.finish()?;
     Ok(())
 }
@@ -161,7 +161,7 @@ mod tests {
         let expected: Vec<u8> = [[a, a, b, b], [a, a, b, b], [b, b, a, a], [b, b, a, a]]
             .concat()
             .concat();
-        assert_eq!(canvas.data, expected);
+        assert_eq!(canvas.rgba, expected);
     }
 
     #[test]

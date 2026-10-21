@@ -82,18 +82,23 @@ fn run(cli: &Cli) -> Result<(), String> {
         None if is_stdio(&cli.input) => PathBuf::from("-"),
         None => cli.input.with_extension("png"),
     };
-    let writer: Box<dyn Write> = if is_stdio(&output) {
+    write_image(&canvas, &output)
+}
+
+/// Writes `canvas` as a PNG to `output`, or to stdout if `output` is `-`.
+fn write_image(canvas: &pxl::Canvas, output: &Path) -> Result<(), String> {
+    let sink: Box<dyn Write> = if is_stdio(output) {
         Box::new(io::stdout().lock())
     } else {
-        let file = File::create(&output)
+        let file = File::create(output)
             .map_err(|err| format!("cannot create {}: {err}", output.display()))?;
         Box::new(file)
     };
 
     let write_error =
-        |err: &dyn Display| format!("cannot write {}: {err}", describe(&output, "stdout"));
-    let mut writer = BufWriter::new(writer);
-    pxl::write_png(&canvas, &mut writer).map_err(|err| write_error(&err))?;
+        |err: &dyn Display| format!("cannot write {}: {err}", describe(output, "stdout"));
+    let mut writer = BufWriter::new(sink);
+    pxl::write_png(canvas, &mut writer).map_err(|err| write_error(&err))?;
     writer.flush().map_err(|err| write_error(&err))
 }
 

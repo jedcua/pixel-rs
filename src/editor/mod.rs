@@ -38,14 +38,14 @@ pub fn run(path: &Path) -> Result<(), String> {
     ratatui::restore();
     result.map_err(|err| format!("terminal failed: {err}"))?;
     // The alert of a save and quit closes with the editor, so print it.
-    if let Some(note) = app.exit_note {
+    if let Some(note) = app.exit_note() {
         println!("{note}");
     }
     Ok(())
 }
 
 fn event_loop(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
-    while !app.quit {
+    while !app.is_done() {
         let mut screen = Screen::default();
         terminal.draw(|frame| screen = view::draw(frame, app))?;
         app.set_screen(screen);

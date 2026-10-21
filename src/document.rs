@@ -4,7 +4,7 @@
 use std::fmt;
 use std::fmt::Write as _;
 
-use crate::parse::{self, Image, ParseError, Rgba};
+use crate::parse::{Image, Rgba};
 
 /// One palette line: a key char and its color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,18 +26,19 @@ pub enum PaletteError {
     SelfReplacement,
 }
 
+/// Each message is a full sentence that the editor can show to the user.
 impl fmt::Display for PaletteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PaletteError::WhitespaceKey => write!(f, "key is whitespace; use a visible char"),
+            PaletteError::WhitespaceKey => write!(f, "Key is whitespace. Use a visible char."),
             PaletteError::DuplicateKey(key) => {
-                write!(f, "key `{key}` is in use; use a different key")
+                write!(f, "Key `{key}` is in use. Use a different key.")
             }
             PaletteError::LastEntry => {
-                write!(f, "palette has only one color; add a color first")
+                write!(f, "Palette has only one color. Add a color first.")
             }
             PaletteError::SelfReplacement => {
-                write!(f, "replacement is the removed color; use a different key")
+                write!(f, "Replacement is the removed color. Use a different key.")
             }
         }
     }
@@ -59,15 +60,6 @@ pub struct Document {
 }
 
 impl Document {
-    /// Parses `.pxl` source text.
-    ///
-    /// # Errors
-    ///
-    /// Returns a [`ParseError`] if the source is not a valid `.pxl` file.
-    pub fn parse(source: &str) -> Result<Self, ParseError> {
-        parse::parse_document(source)
-    }
-
     /// Makes a document from parts that the parser checked.
     pub(crate) fn from_parts(
         palette: Vec<PaletteEntry>,
@@ -161,6 +153,7 @@ impl Document {
 
     /// Removes the palette entry `index`. The pixels that use it change to
     /// the entry `replacement`. The indices after `index` move down by 1.
+    /// Returns the new index of `replacement`.
     ///
     /// # Errors
     ///
@@ -170,7 +163,11 @@ impl Document {
     /// # Panics
     ///
     /// Panics if `index` or `replacement` is not a palette index.
-    pub fn remove_entry(&mut self, index: usize, replacement: usize) -> Result<(), PaletteError> {
+    pub fn remove_entry(
+        &mut self,
+        index: usize,
+        replacement: usize,
+    ) -> Result<usize, PaletteError> {
         let len = self.palette.len();
         assert!(
             index < len && replacement < len,
@@ -192,7 +189,7 @@ impl Document {
             };
         }
         self.palette.remove(index);
-        Ok(())
+        Ok(target)
     }
 
     /// Returns the image with the colors of the palette.
@@ -307,7 +304,7 @@ mod tests {
     #[test]
     fn remove_entry_replaces_its_pixels_and_shifts_later_indices() {
         let mut doc = document();
-        doc.remove_entry(0, 2).unwrap();
+        assert_eq!(doc.remove_entry(0, 2), Ok(1));
         assert_eq!(doc.to_pxl(), "X - #FFFFFFFF\nr - #FF0000FF\n\nXXX\nXrr\n");
         assert_eq!((doc.pixel(0, 0), doc.pixel(2, 1)), (0, 1));
     }

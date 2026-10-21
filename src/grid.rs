@@ -3,7 +3,7 @@
 
 use std::num::NonZeroU32;
 
-use crate::parse::{Image, Rgba};
+use crate::parse::{CHECKER, Image, Rgba};
 use crate::render::{Canvas, RenderError};
 
 /// Grid lines at multiples of this cell count are darker.
@@ -17,7 +17,6 @@ const MARGIN_COLOR: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
 const LABEL_COLOR: [u8; 4] = [0x20, 0x20, 0x20, 0xFF];
 const MINOR_LINE_COLOR: [u8; 4] = [0xC8, 0xC8, 0xC8, 0xFF];
 const MAJOR_LINE_COLOR: [u8; 4] = [0x40, 0x40, 0x40, 0xFF];
-const CHECKER_COLORS: [[u8; 3]; 2] = [[0xFF, 0xFF, 0xFF], [0xCC, 0xCC, 0xCC]];
 
 /// Size in output pixels of one dot in a digit glyph.
 const GLYPH_DOT: u32 = 2;
@@ -173,7 +172,7 @@ fn fill_cell(canvas: &mut Canvas, origin: (u32, u32), size: u32, color: Rgba) {
     for dy in 0..size {
         for dx in 0..size {
             let checker = (dx / CHECKER_SIZE + dy / CHECKER_SIZE) % 2;
-            let back = CHECKER_COLORS[checker as usize];
+            let back = CHECKER[checker as usize];
             canvas.set(origin_x + dx, origin_y + dy, blend(color, back));
         }
     }
@@ -181,13 +180,8 @@ fn fill_cell(canvas: &mut Canvas, origin: (u32, u32), size: u32, color: Rgba) {
 
 /// Blends `color` over the opaque color `back` and returns an opaque color.
 fn blend(color: Rgba, back: [u8; 3]) -> [u8; 4] {
-    let [r, g, b, a] = color.0;
-    let alpha = u32::from(a);
-    let mix = |front: u8, back: u8| {
-        let value = (u32::from(front) * alpha + u32::from(back) * (255 - alpha) + 127) / 255;
-        u8::try_from(value).expect("blend of two u8 values fits in u8")
-    };
-    [mix(r, back[0]), mix(g, back[1]), mix(b, back[2]), 0xFF]
+    let [red, green, blue] = color.over(back);
+    [red, green, blue, 0xFF]
 }
 
 /// Draws the x labels above the grid and the y labels at its left.
