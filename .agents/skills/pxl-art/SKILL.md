@@ -1,6 +1,6 @@
 ---
 name: pxl-art
-description: Draw or improve pixel art in the .pxl text format with the loop of a pixel artist - draw, look, refine. Accepts options for quality, style, color count, palette, size, outline, shading, light, background, and view. If the request gives no options, interviews the user about them first. Use this skill when the user asks you to create, change, or improve a .pxl file or pixel art.
+description: Draw or improve pixel art in the .pxl text format with the loop of a pixel artist - draw, look, refine. Accepts options for quality, style, color count, palette, size, outline, shading, light, background, and view. If the request gives no options, interviews the user about them first. Converts a PNG or JPG of pixel art to .pxl, so that the art can be changed. Use this skill when the user asks you to create, change, or improve a .pxl file or pixel art, or to convert a pixel art image to .pxl.
 ---
 
 # Pixel art in `.pxl`
@@ -13,6 +13,7 @@ Do many short passes. Each pass has one goal.
 1. Write and change the `.pxl` file directly with your file tools: `write` for a new file, `edit` for changes.
 2. NEVER generate pixel data with a script, a program, or shape formulas (ellipses, polygons, noise, gradients).
    Formula shapes look stiff and generic. They also remove the pixel-level decisions that make pixel art good.
+   `pxl -c` is not generation: it copies the pixels of existing pixel art. See [Start from an image](#start-from-an-image).
 3. Render and look at the image after every pass. NEVER deliver art that you did not look at after the last change.
 4. NEVER deliver the first draft. Do the critique passes that the [quality level](#quality-levels) requires.
 5. Keep every pixel row at exactly the canvas width. The parser rejects a row with a different width.
@@ -67,7 +68,7 @@ Do not interview in these conditions. Use the defaults, and tell the user your c
 - You cannot ask the user, for example because you run as a subagent or in a non-interactive session.
 - The user does not answer a question. Use the default for that option only.
 
-For a change to an existing `.pxl` file, the file gives the size and the palette. Do not ask about them. Ask only about the change, if the request does not make it clear.
+For a change to an existing `.pxl` file, or to a pixel art image that you [convert](#start-from-an-image), the file gives the size and the palette. Do not ask about them. Ask only about the change, if the request does not make it clear.
 
 ### Quality levels
 
@@ -132,7 +133,7 @@ H - #5B4B8AFF
 
 Use the `pxl` command. Read each PNG with the `read` tool to look at it.
 
-If `pxl` is not on `PATH`, tell the user to install it: run `mise run install` in the pixel-rs repository. Inside the pixel-rs repository, you can use `cargo run --quiet --` in place of `pxl`.
+If `pxl` is not on `PATH`, tell the user to install it: run `mise run install` in the pixel-rs repository. Inside the pixel-rs repository, you can use `cargo run --quiet --` in place of `pxl`. If `pxl` rejects an option in this skill, for example `-c`, the installed `pxl` is old. Tell the user to run `mise run install` again.
 
 1. Grid view, to find coordinates:
 
@@ -174,6 +175,58 @@ The grid view has these features:
 - The labels at the top give `x`. The labels at the left give `y`. Both start at 0.
 - A dark line is at each multiple of 10. A light line is between all other cells.
 - A checkerboard shows the transparent pixels.
+
+Do not use `pxl -p` or `pxl -e`. `-p` prints terminal color codes, which you cannot see as an image. `-e` is an interactive editor for the user.
+
+## Start from an image
+
+Use this section only if the image is the art itself: the user wants to change, improve, or convert that image.
+
+Do not convert a reference image. A reference shows the subject, the style, or the colors for new art. Look at it with `read`, and draw the new art with the normal stages. If the role of the image is not clear, ask the user.
+
+CAUTION: Convert only pixel art. A photo, a drawing, or a smooth (anti-aliased) resize of pixel art becomes noise, with hundreds of colors. Then tell the user, and draw the subject with the normal stages. Use the image as a reference.
+
+1. Get the image size:
+
+   ```sh
+   file <image>
+   ```
+
+2. Look at the image with `read`. Estimate the scale: the size in image pixels of one art pixel, for example 1, 2, 4, or 8. The scale must divide the width and the height.
+3. For a PNG, find the exact scale. Test each candidate scale `N`, from the largest to the smallest. The first scale that prints `exact` is the correct scale:
+
+   ```sh
+   pxl -c -s N -o /tmp/<name>-sN.pxl <image> && pxl -s N -o - /tmp/<name>-sN.pxl | pxl -c -o - - | cmp -s - <(pxl -c -o - <image>) && echo "scale N is exact"
+   ```
+
+   The command converts at scale `N`, renders the result at scale `N`, and compares it with the image. Scale 1 is always exact. If only scale 1 is exact, but the image looks scaled, the art is not on an exact grid. Then tell the user. The image possibly has a border, or a resize that is not a whole number.
+4. For a JPG, the exact check does not work. Choose the scale from the image. Convert, render the result at the same scale, and compare the two images by eye.
+5. Convert the image to the `.pxl` file:
+
+   ```sh
+   pxl -c -s N -o <file>.pxl <image>
+   ```
+
+6. Read the `.pxl` file. Fully transparent pixels have the key `.`. The other keys are `A`-`Z`, `a`-`z`, `0`-`9`, and then punctuation, in order of color frequency.
+7. For a JPG, find palette colors that are almost equal. Merge the rare color into the frequent color. See [Merge or rename a key](#merge-or-rename-a-key).
+8. Render the grid view and the clean view. Compare them with the image.
+9. Continue with the request. For a change or an improvement, use the stages from the [layout plan](#2-layout-plan). Keep the parts of the art that the request does not change.
+
+### Merge or rename a key
+
+A merge or a rename of a key changes all pixel rows. This is a mechanical change, not generation, so you can use one command for it. `P` is the file line of row 0.
+
+1. Change the key in the pixel rows. For example, change `x` to `K`:
+
+   ```sh
+   sed -i 'P,$ y/x/K/' <file>.pxl
+   ```
+
+2. For a merge, remove the palette line of `x`. For a rename, change the key on the palette line of `x`. Make sure that no other palette line uses the new key.
+3. A merge changes `P`. Calculate `P` again.
+4. Render the file, and make sure that it parses.
+
+Do not use `/` or `\` as a key in the `sed` command.
 
 ## Coordinates and file lines
 
@@ -226,6 +279,7 @@ Do the stages that the [quality level](#quality-levels) requires. [references/TE
 ### 1. Brief
 
 Find the subject and the mood. [Resolve the options](#options). If the request gives no options, [interview the user](#interview) first.
+If the request gives a PNG or JPG of pixel art to change or improve, [convert it](#start-from-an-image) first. If the image is a reference, only look at it.
 After the options are resolved, ask the user again only if a missing fact changes the result a lot. If not, choose, and tell the user your choice.
 
 If the user does not give `size`, use the size for the subject type:
@@ -294,6 +348,7 @@ Add anti-aliasing and dithering only if the style allows them. See [Edges](refer
 1. Render at 1x and at the delivery scale.
 2. Compare the result with the brief, the layout plan, and the resolved options. Count the colors in the palette.
 3. Tell the user the file path, the canvas size, the color count, the resolved options, and the command to render the file.
+4. Tell the user that `pxl -p <file>.pxl` shows the art in the terminal, and that `pxl -e <file>.pxl` opens it in the terminal editor for manual changes.
 
 ## Critique checklist
 

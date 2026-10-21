@@ -1,7 +1,8 @@
 # pixel-rs
 
-`pixel-rs` is a parser, PNG renderer, and terminal editor for `.pxl` files. A
-`.pxl` file is a plain text file that describes one pixel art image.
+`pixel-rs` is a parser, PNG renderer, terminal editor, and image converter for
+`.pxl` files. A `.pxl` file is a plain text file that describes one pixel art
+image.
 
 ## The `.pxl` format
 
@@ -62,6 +63,7 @@ task gives a warning. Then add the directory to `PATH` in your shell profile.
 
 ```text
 pxl [-g] [-o output] [-s scale] file
+pxl -c [-o output] [-s scale] image
 pxl -p file
 pxl -e file
 ```
@@ -82,14 +84,15 @@ mise run render -- -s 20 -o square.png examples/square.pxl
 
 | Operand or option     | Default                          | Description                                    |
 | --------------------- | -------------------------------- | ---------------------------------------------- |
-| `file`                | (required)                       | Path to the `.pxl` file. `-` means stdin.      |
-| `-o`, `--output`      | Input path with `.png` extension | Path to the output PNG. `-` means stdout.      |
-| `-s`, `--scale`       | `1`                              | Size in output pixels of one char (1 or more). |
+| `file`                | (required)                       | Path to the `.pxl` file, or to the image with `-c`. `-` means stdin. |
+| `-o`, `--output`      | Input path with `.png` extension (`.pxl` with `-c`) | Path to the output file. `-` means stdout. |
+| `-s`, `--scale`       | `1`                              | Size in output pixels of one char (1 or more). With `-c`, size in image pixels of one char. |
 | `-g`, `--grid`        | Off                              | Render the grid view (see below).              |
-| `-p`, `--print`       | Off                              | Print the image in the terminal (see below). You cannot use it with `-o`, `-s`, `-g`, or `-e`. |
-| `-e`, `--edit`        | Off                              | Open the file in the terminal editor (see below). You cannot use it with `-o`, `-s`, `-g`, `-p`, or `-` as `file`. |
+| `-c`, `--convert`     | Off                              | Convert a PNG or JPG image to a `.pxl` file (see below). You cannot use it with `-g`, `-p`, or `-e`. |
+| `-p`, `--print`       | Off                              | Print the image in the terminal (see below). You cannot use it with `-o`, `-s`, `-g`, `-c`, or `-e`. |
+| `-e`, `--edit`        | Off                              | Open the file in the terminal editor (see below). You cannot use it with `-o`, `-s`, `-g`, `-c`, `-p`, or `-` as `file`. |
 
-If `file` is `-` and you do not give `-o`, the PNG goes to stdout, so you can
+If `file` is `-` and you do not give `-o`, the output goes to stdout, so you can
 use `pxl` in a pipeline:
 
 ```sh
@@ -111,6 +114,37 @@ Use a scale of 4 or more, so that the cells are larger than the lines:
 ```sh
 mise run render -- -g -s 8 -o grid.png examples/square.pxl
 ```
+
+### Convert an image
+
+Use `-c` to convert a PNG or JPG image of pixel art to a `.pxl` file. The
+output goes to the input path with a `.pxl` extension:
+
+```sh
+pxl -c art.png
+```
+
+Many images show pixel art at a larger size, where each art pixel is a block
+of 2 x 2 or 4 x 4 image pixels. Give the block size with `-s`, so that each
+block becomes one char. A 128 x 128 image at scale 4 becomes a 32 x 32 file:
+
+```sh
+pxl -c -s 4 -o art.pxl art.png
+```
+
+The image width and height must be multiples of the scale. Thus
+`pxl -s 4 art.pxl` and `pxl -c -s 4 art.png` reverse each other.
+
+The converter makes the palette as follows:
+
+- Each char gets the most frequent color in its block.
+- All fully transparent pixels get the key `.` and the color `#00000000`.
+- The other colors get the keys `A`-`Z`, `a`-`z`, `0`-`9`, ASCII
+  punctuation, and then other Unicode letters, in order of frequency.
+- A PNG keeps its exact colors.
+- In a JPG, colors that are almost equal become one color. This removes most
+  of the JPG compression noise. A JPG with low quality can still give some
+  extra colors that are almost equal. Use the editor to delete them.
 
 ### Print in the terminal
 
@@ -220,6 +254,11 @@ and refine:
 The stages are brief, layout plan, palette, canvas, silhouette, lines,
 shading, detail, cleanup, and final check. `references/TECHNIQUES.md` lists
 the principles of good pixel art and the common defects.
+
+If you give a PNG or JPG of pixel art to change or improve, the agent
+converts it with `pxl -c` first. For a PNG, it finds the exact scale with a
+round-trip check. Then it changes or improves the art with the same loop. A
+reference image for new art is not converted. The agent only looks at it.
 
 You can give options in the request, in words or as `name: value` pairs:
 

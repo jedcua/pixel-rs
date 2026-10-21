@@ -5,29 +5,32 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::{Args, Parser};
 
 mod editor;
 
-/// Render a .pxl pixel art file to a PNG image or to the terminal, or edit it
-/// in the terminal.
+/// Render a .pxl pixel art file to a PNG image or to the terminal, edit it
+/// in the terminal, or convert a PNG or JPG image to a .pxl file.
 #[derive(Parser)]
 #[command(
     version,
-    override_usage = "pxl [-g] [-o output] [-s scale] file\n       pxl -p file\n       pxl -e file",
+    override_usage = "pxl [-g] [-o output] [-s scale] file\n       pxl -c [-o output] [-s scale] image\n       pxl -p file\n       pxl -e file",
     args_override_self = true
 )]
 struct Cli {
-    /// Path to the .pxl file. Use `-` to read from stdin.
+    /// Path to the .pxl file, or to the PNG or JPG image with -c. Use `-` to
+    /// read from stdin.
     #[arg(value_name = "file")]
     input: PathBuf,
 
-    /// Path to the output PNG. Use `-` to write to stdout. The default is the
-    /// input path with a .png extension, or stdout if the input is stdin.
+    /// Path to the output PNG, or to the output .pxl file with -c. Use `-` to
+    /// write to stdout. The default is the input path with a .png extension
+    /// (.pxl with -c), or stdout if the input is stdin.
     #[arg(short, long, value_name = "output")]
     output: Option<PathBuf>,
 
-    /// Size in output pixels of one .pxl char.
+    /// Size in output pixels of one .pxl char. With -c, size in image pixels
+    /// of one .pxl char.
     #[arg(short, long, value_name = "scale", default_value_t = NonZeroU32::MIN)]
     scale: NonZeroU32,
 
@@ -36,8 +39,21 @@ struct Cli {
     #[arg(short, long)]
     grid: bool,
 
+    #[command(flatten)]
+    mode: Mode,
+}
+
+/// The modes other than render. A command uses one mode at most.
+#[derive(Args)]
+#[group(multiple = false)]
+struct Mode {
+    /// Convert a PNG or JPG image of pixel art to a .pxl file. Each block of
+    /// scale x scale image pixels becomes one .pxl char.
+    #[arg(short, long, conflicts_with = "grid")]
+    convert: bool,
+
     /// Open the file in the terminal editor, and do not render a PNG.
-    #[arg(short, long, conflicts_with_all = ["output", "scale", "grid", "print"])]
+    #[arg(short, long, conflicts_with_all = ["output", "scale", "grid"])]
     edit: bool,
 
     /// Print the image to stdout with 24-bit terminal colors, and do not
@@ -58,16 +74,23 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: &Cli) -> Result<(), String> {
-    if cli.edit {
+    if cli.mode.edit {
         if is_stdio(&cli.input) {
             return Err("cannot edit stdin; give a file path".into());
         }
         return editor::run(&cli.input);
     }
     let input = describe(&cli.input, "stdin");
-    let source = read_source(&cli.input).map_err(|err| format!("cannot read {input}: {err}"))?;
+    let bytes = read_input(&cli.input).map_err(|err| format!("cannot read {input}: {err}"))?;
+    if cli.mode.convert {
+        let document = pxl::convert(&bytes, cli.scale).map_err(|err| format!("{input}: {err}"))?;
+        return write_output(&output_path(cli, "pxl"), |writer| {
+            writer.write_all(document.to_pxl().as_bytes())
+        });
+    }
+    let source = String::from_utf8(bytes).map_err(|err| format!("cannot read {input}: {err}"))?;
     let image = pxl::parse(&source).map_err(|err| format!("{input}: {err}"))?;
-    if cli.print {
+    if cli.mode.print {
         return print_ansi(&image);
     }
     let canvas = if cli.grid {
@@ -76,17 +99,27 @@ fn run(cli: &Cli) -> Result<(), String> {
         pxl::render(&image, cli.scale)
     }
     .map_err(|err| format!("{input}: {err}"))?;
-
-    let output = match &cli.output {
-        Some(path) => path.clone(),
-        None if is_stdio(&cli.input) => PathBuf::from("-"),
-        None => cli.input.with_extension("png"),
-    };
-    write_image(&canvas, &output)
+    write_output(&output_path(cli, "png"), |writer| {
+        pxl::write_png(&canvas, writer)
+    })
 }
 
-/// Writes `canvas` as a PNG to `output`, or to stdout if `output` is `-`.
-fn write_image(canvas: &pxl::Canvas, output: &Path) -> Result<(), String> {
+/// Returns the `-o` path, or else stdout for stdin input, or else the input
+/// path with `extension`.
+fn output_path(cli: &Cli, extension: &str) -> PathBuf {
+    match &cli.output {
+        Some(path) => path.clone(),
+        None if is_stdio(&cli.input) => PathBuf::from("-"),
+        None => cli.input.with_extension(extension),
+    }
+}
+
+/// Calls `write` with a buffered writer for `output`, or for stdout if
+/// `output` is `-`.
+fn write_output<E: Display>(
+    output: &Path,
+    write: impl FnOnce(&mut BufWriter<Box<dyn Write>>) -> Result<(), E>,
+) -> Result<(), String> {
     let sink: Box<dyn Write> = if is_stdio(output) {
         Box::new(io::stdout().lock())
     } else {
@@ -98,17 +131,17 @@ fn write_image(canvas: &pxl::Canvas, output: &Path) -> Result<(), String> {
     let write_error =
         |err: &dyn Display| format!("cannot write {}: {err}", describe(output, "stdout"));
     let mut writer = BufWriter::new(sink);
-    pxl::write_png(canvas, &mut writer).map_err(|err| write_error(&err))?;
+    write(&mut writer).map_err(|err| write_error(&err))?;
     writer.flush().map_err(|err| write_error(&err))
 }
 
-fn read_source(path: &Path) -> io::Result<String> {
+fn read_input(path: &Path) -> io::Result<Vec<u8>> {
     if is_stdio(path) {
-        let mut source = String::new();
-        io::stdin().lock().read_to_string(&mut source)?;
-        Ok(source)
+        let mut bytes = Vec::new();
+        io::stdin().lock().read_to_end(&mut bytes)?;
+        Ok(bytes)
     } else {
-        fs::read_to_string(path)
+        fs::read(path)
     }
 }
 
