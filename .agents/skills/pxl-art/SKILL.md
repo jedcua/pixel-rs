@@ -10,7 +10,7 @@ Do many short passes. Each pass has one goal.
 
 ## Rules
 
-1. Write and change the `.pxl` file directly with your file tools: `write` for a new file, `edit` for changes.
+1. Write and change the `.pxl` file directly: `write` for a new file, `edit` for changes to whole rows, and [`pxl --set`](#tools) for changes to single pixels and small rectangles.
 2. NEVER generate pixel data with a script, a program, or shape formulas (ellipses, polygons, noise, gradients).
    Formula shapes look stiff and generic. They also remove the pixel-level decisions that make pixel art good.
    `pxl -c` is not generation: it copies the pixels of existing pixel art. See [Start from an image](#start-from-an-image).
@@ -137,7 +137,7 @@ H - #5B4B8AFF
 
 Use the `pxl` command. Read each PNG with the `read` tool to look at it.
 
-If `pxl` is not on `PATH`, tell the user to install it: run `mise run install` in the pixel-rs repository. Inside the pixel-rs repository, you can use `cargo run --quiet --` in place of `pxl`. If `pxl` rejects an option in this skill, for example `-c`, the installed `pxl` is old. Tell the user to run `mise run install` again.
+If `pxl` is not on `PATH`, tell the user to install it: run `mise run install` in the pixel-rs repository. Inside the pixel-rs repository, you can use `cargo run --quiet --` in place of `pxl`. If `pxl` rejects an option in this skill, for example `-c` or `--set`, the installed `pxl` is old. Tell the user to run `mise run install` again.
 
 1. Grid view, to find coordinates:
 
@@ -162,6 +162,20 @@ If `pxl` is not on `PATH`, tell the user to install it: run `mise run install` i
    ```sh
    awk -v p=P -v w=W 'NR >= p && length($0) != w { print "line " NR ", y " NR - p ": width " length($0) }' <file>.pxl
    ```
+
+5. Set pixels by coordinates:
+
+   ```sh
+   pxl --set <file>.pxl '30,52=K' '13-15,23=K' '30-37,52-60=.'
+   ```
+
+   - Each edit is `x,y=K`. `x` and `y` are a coordinate or an inclusive range `a-b`, as in the grid view. `K` is a palette key.
+   - `x,y=K` sets one pixel, `x0-x1,y=K` sets a run in one row, and `x0-x1,y0-y1=K` sets a rectangle.
+   - Put each edit in single quotes, because keys such as `*`, `$`, and `#` are special in the shell.
+   - The edits apply from left to right. A later edit wins where two edits overlap.
+   - If an edit is outside the canvas or uses a key that is not in the palette, the file does not change, and the error names the edit.
+   - The command prints the number of changed pixels. If it prints 0, the edit did not do what you intended.
+   - The command writes each palette line as `<key> - #RRGGBBAA` and one blank line after the palette.
 
 Put the pass number in each image name (`<pass>`). The `read` tool can return a cached image for a file name that it read before, and then you look at an old pass.
 
@@ -242,9 +256,15 @@ Do not use `/` or `\` as a key in the `sed` command.
 
 ## Edit technique
 
-- Change whole rows. To change a region, replace the block of rows that contains the region.
+Use the tool that agrees with the size of the change:
+
+- **`pxl --set`** for a change of single pixels, runs, or small rectangles: a fix from a critique, a highlight, anti-aliasing, an orphan, or a line defect. Copy the coordinates from the critique into the edits. Do not count chars in a row.
+- **Whole rows** with `edit` for a new region or a new shape: the canvas, the silhouette, and large changes of form. Then the rows show the shape in the text.
+
+For a change of whole rows:
+
+- To change a region, replace the block of rows that contains the region.
 - Read the current rows with `read` before you change them. Do not type rows from memory.
-- To change some pixels in a row, copy the current row and change only those chars.
 - Before you type a new row, make a run plan. Give each run its x range and key. Then make sure that the runs fill the width with no gap and no overlap:
 
   ```text
@@ -254,7 +274,7 @@ Do not use `/` or `\` as a key in the `sed` command.
 
 - Align your attention to the blocks of 10 cells from the grid view. Count each block of 10 chars, not the full row.
 - For a symmetric subject, draw the left half. Make the right half as the left half in reverse order. Then add asymmetry where the subject needs it, for example hair or light.
-- After each edit, run the width check and then the renders. Fix all rows with a bad width before you do other work.
+- After each change of whole rows, run the width check and then the renders. Fix all rows with a bad width before you do other work.
 - Expect typing errors in long rows. In a trial, 6 of 32 rows had a bad width after the first full write. The width check finds all of them in one run.
 
 ## The loop
@@ -262,7 +282,7 @@ Do not use `/` or `\` as a key in the `sed` command.
 Do these steps in each pass:
 
 1. **Goal.** Write one goal for the pass, for example "fix the jaw line".
-2. **Draw.** Change only the rows for that goal.
+2. **Draw.** Change only the pixels for that goal. Use the [edit technique](#edit-technique) for the size of the change.
 3. **Render.** Make the clean view and the grid view.
 4. **Look.** Examine the clean view first, for the overall impression. Then use the grid view to find coordinates. Use the 1x view to check readability.
 5. **Critique.** Write a list of concrete defects. Give each defect a location and a fix:

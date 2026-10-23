@@ -1,7 +1,7 @@
 # pixel-rs
 
-`pixel-rs` is a parser, PNG renderer, terminal editor, and image converter for
-`.pxl` files. A `.pxl` file is a plain text file that describes one pixel art
+`pixel-rs` is a parser, PNG renderer, terminal editor, pixel setter, and image
+converter for `.pxl` files. A `.pxl` file is a plain text file that describes one pixel art
 image.
 
 ## The `.pxl` format
@@ -66,6 +66,7 @@ pxl [-g] [-o output] [-s scale] file
 pxl -c [-o output] [-s scale] image
 pxl -p file
 pxl -e file
+pxl --set [-o output] file edit...
 ```
 
 Render a file to PNG. Each char becomes one pixel, and the output goes to
@@ -85,12 +86,13 @@ mise run render -- -s 20 -o square.png examples/square.pxl
 | Operand or option     | Default                          | Description                                    |
 | --------------------- | -------------------------------- | ---------------------------------------------- |
 | `file`                | (required)                       | Path to the `.pxl` file, or to the image with `-c`. `-` means stdin. |
-| `-o`, `--output`      | Input path with `.png` extension (`.pxl` with `-c`) | Path to the output file. `-` means stdout. |
+| `-o`, `--output`      | Input path with `.png` extension (`.pxl` with `-c`, the input path with `--set`) | Path to the output file. `-` means stdout. |
 | `-s`, `--scale`       | `1`                              | Size in output pixels of one char (1 or more). With `-c`, size in image pixels of one char. |
 | `-g`, `--grid`        | Off                              | Render the grid view (see below).              |
-| `-c`, `--convert`     | Off                              | Convert a PNG or JPG image to a `.pxl` file (see below). You cannot use it with `-g`, `-p`, or `-e`. |
-| `-p`, `--print`       | Off                              | Print the image in the terminal (see below). You cannot use it with `-o`, `-s`, `-g`, `-c`, or `-e`. |
-| `-e`, `--edit`        | Off                              | Open the file in the terminal editor (see below). You cannot use it with `-o`, `-s`, `-g`, `-c`, `-p`, or `-` as `file`. |
+| `-c`, `--convert`     | Off                              | Convert a PNG or JPG image to a `.pxl` file (see below). You cannot use it with `-g`, `-p`, `-e`, or `--set`. |
+| `-p`, `--print`       | Off                              | Print the image in the terminal (see below). You cannot use it with `-o`, `-s`, `-g`, `-c`, `-e`, or `--set`. |
+| `-e`, `--edit`        | Off                              | Open the file in the terminal editor (see below). You cannot use it with `-o`, `-s`, `-g`, `-c`, `-p`, `--set`, or `-` as `file`. |
+| `--set`               | Off                              | Set pixels by coordinates (see below). You cannot use it with `-s`, `-g`, `-c`, `-p`, or `-e`. |
 
 If `file` is `-` and you do not give `-o`, the output goes to stdout, so you can
 use `pxl` in a pipeline:
@@ -165,6 +167,38 @@ other terminals show approximate colors. `-` reads the file from stdin:
 ```sh
 generate-art | pxl -p -
 ```
+
+### Set pixels
+
+Use `--set` to change pixels by coordinates, without an editor. The file
+changes in place:
+
+```sh
+pxl --set art.pxl '3,4=K' '0-9,4=.' '12-15,20-23=H'
+```
+
+Each edit has the form `x,y=K`:
+
+- `x` and `y` are a 0-based coordinate, as in the grid view, or an inclusive
+  range `a-b`.
+- `K` is one palette key. Any key is valid, including `=` and `,`.
+- `x,y=K` sets one pixel, `x0-x1,y=K` sets a run in one row, and
+  `x0-x1,y0-y1=K` sets a rectangle.
+
+Put each edit in single quotes, because some keys are special in the shell.
+The edits apply from left to right, so a later edit wins where edits
+overlap. If an edit is outside the image or uses a key that is not in the
+palette, `pxl` writes nothing, and the error names the edit:
+
+```text
+error: art.pxl: edit `40,3=K`: x is outside the image; use x from 0 to 39
+```
+
+After a success, `pxl` prints the number of changed pixels to stderr. It
+writes the file like the editor does: each palette line as
+`<key> - #RRGGBBAA`, and one blank line before the pixel rows. Use `-o` to
+write to a different file, or `-o -` to see the result without a change to the
+file.
 
 ### Terminal editor
 
@@ -244,8 +278,8 @@ worse, and write a comment that gives the reason.
 tells the agent to work like a pixel artist, in short passes of draw, look,
 and refine:
 
-1. The agent edits the `.pxl` file directly. It does not generate pixels with
-   a script.
+1. The agent edits the `.pxl` file directly: whole rows for new shapes, and
+   `pxl --set` for small fixes. It does not generate pixels with a script.
 2. After each pass, the agent renders the clean view and the grid view and
    looks at them.
 3. The agent writes a list of defects with coordinates, then corrects the
