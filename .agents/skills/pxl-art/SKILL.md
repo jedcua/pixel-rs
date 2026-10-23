@@ -18,6 +18,7 @@ Do many short passes. Each pass has one goal.
 4. NEVER deliver the first draft. Do the critique passes that the [quality level](#quality-levels) requires.
 5. Keep every pixel row at exactly the canvas width. The parser rejects a row with a different width.
 6. Obey the [options](#options). NEVER use more colors than the color limit.
+7. Get the [critic reviews](#critic-review) that the quality level requires. NEVER give the critic your plan or your notes.
 
 ## Options
 
@@ -80,6 +81,8 @@ For a change to an existing `.pxl` file, or to a pixel art image that you [conve
 | `clean`    | All stages.                                                | 1 for each stage.                                                        | One light direction, 2-3 tones for each material, and no line defects.                       |
 | `polished` | All stages.                                                | 1 for each stage, and 2 for shading and for cleanup. Continue until the critique checklist finds no defect. | All the [techniques](references/TECHNIQUES.md) that the style allows: hue-shifted ramps, selective outline, anti-aliasing, texture, reflected light, and a strong focal point. |
 
+Each quality level also requires [critic reviews](#critic-review) at fixed points.
+
 Quality does not add techniques that the style excludes. A `polished` `flat` image has flat colors with perfect lines and shapes.
 
 ### Style presets
@@ -94,6 +97,7 @@ Quality does not add techniques that the style excludes. A `polished` `flat` ima
 | `flat`    | 4-12   | `free`    | `full`      | `flat`   | No            | No                        |
 
 In `8-bit` style, use at most 3 colors for each object, plus the outline. Use large, simple shapes.
+If the user asks for a strict retro look, use the [hardware limits](references/TECHNIQUES.md#hardware-limits) of the `8-bit` or `gameboy` style.
 
 ### Shading types
 
@@ -264,6 +268,7 @@ Do these steps in each pass:
 5. **Critique.** Write a list of concrete defects. Give each defect a location and a fix:
    `Left eye, x 30-37, y 52-60: one row lower than the right eye. Move it up one row.`
    Use the [Critique checklist](#critique-checklist). Write the worst defect first.
+   At a point that requires a [critic review](#critic-review), get the review now, and add its defects to your list.
 6. **Decide.** If a defect is easy to see, start the next pass with it. If not, go to the next stage.
 
 Fix large problems before small problems, in this order:
@@ -271,6 +276,55 @@ proportion, silhouette, color, shading, detail, cleanup.
 A good detail cannot correct a bad proportion.
 
 Be honest in the critique. Compare your drawing with the work of a skilled pixel artist, not with your last pass.
+
+## Critic review
+
+You know what you intended to draw, so you see your intent and not the pixels. A critic is a new subagent that sees only the pixels.
+
+| Quality    | Critic reviews                                               |
+| ---------- | ------------------------------------------------------------ |
+| `sketch`   | None.                                                        |
+| `clean`    | After the silhouette (stage 5), and in the final check.      |
+| `polished` | After the silhouette (stage 5), after shading (stage 7), and in the final check. |
+
+Do these steps for each review:
+
+1. Render the clean view, the grid view, and the 1x view of the current pass.
+2. Start a new subagent with the subagent tool of your harness, for example `Agent` or `task`. Give it the [critic prompt](#critic-prompt). Use a new subagent for each review. A subagent that saw an earlier pass compares the art with that pass.
+3. Give the critic only the render paths, the subject, the canvas size, and the resolved options. Do not give it your layout plan, your critiques, your pass history, or the changes that you intended.
+4. Examine each defect from the critic on the grid view. Fix each defect that you can see. Reject a defect only if the grid view shows that it is not there, and write the reason in your notes.
+5. Fix the defects in the usual order: proportion, silhouette, color, shading, detail, cleanup.
+
+In the final check, do the review again after your fixes. Stop when the critic writes `no visible defects`, or after 3 reviews. Then tell the user about each defect that remains.
+
+If you cannot start a subagent, review the art yourself. Look at the renders before you read your notes, and write the defects before you compare them with your plan. Tell the user that no independent critic reviewed the art.
+
+### Critic prompt
+
+Replace each `<...>` field. For the checklist, copy the [Critique checklist](#critique-checklist) without the questions about the layout plan and the last fix.
+
+```text
+You are a strict pixel art critic. Review the pixel art in these images. Do not change any file.
+
+Subject: <subject>
+Canvas: <W>x<H>
+Options: <resolved options in one line>
+Images. Look at each image with your image read tool:
+- Clean view: <path>
+- Grid view: <path>. The labels at the top give x. The labels at the left give y. Both start at 0. A dark line is at each multiple of 10. A checkerboard shows the transparent pixels.
+- Actual size: <path>
+
+Compare the art with the work of a skilled pixel artist in this style. Do not praise. Report only defects.
+Also find each part of the subject that is wrong, missing, or not recognizable.
+
+Checklist:
+<checklist>
+
+Answer in this format:
+1. Clear at actual size: yes or no, and the reason.
+2. Defects, worst first. One line for each defect: <part>, x <range>, y <range>: <defect>. <fix>.
+If you find no defect that is easy to see, write "no visible defects" in place of the list.
+```
 
 ## Stages
 
@@ -296,6 +350,7 @@ A small canvas is easier to make good. For a canvas larger than 64 px, the loop 
 
 Before you draw, write a landmark plan in coordinates. Include the center line, the top and bottom of the subject, and the positions and sizes of the main parts.
 Use the real proportions of the subject in the chosen style and view. Leave a margin of at least 1 px around the subject.
+Use the rules of the view in [Views](references/TECHNIQUES.md#views). For a canvas of 32 px or less, use [Small sprites](references/TECHNIQUES.md#small-sprites).
 
 ### 3. Palette
 
@@ -347,8 +402,9 @@ Add anti-aliasing and dithering only if the style allows them. See [Edges](refer
 
 1. Render at 1x and at the delivery scale.
 2. Compare the result with the brief, the layout plan, and the resolved options. Count the colors in the palette.
-3. Tell the user the file path, the canvas size, the color count, the resolved options, and the command to render the file.
-4. Tell the user that `pxl -p <file>.pxl` shows the art in the terminal, and that `pxl -e <file>.pxl` opens it in the terminal editor for manual changes.
+3. Get the [critic reviews](#critic-review) that the quality level requires, and fix the defects.
+4. Tell the user the file path, the canvas size, the color count, the resolved options, and the command to render the file.
+5. Tell the user that `pxl -p <file>.pxl` shows the art in the terminal, and that `pxl -e <file>.pxl` opens it in the terminal editor for manual changes.
 
 ## Critique checklist
 
