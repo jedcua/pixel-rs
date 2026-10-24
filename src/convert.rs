@@ -229,7 +229,11 @@ fn make_document(
         } else {
             keys.next().ok_or(ConvertError::TooManyColors)?
         };
-        palette.push(PaletteEntry { key, color });
+        palette.push(PaletteEntry {
+            key,
+            color,
+            label: None,
+        });
         palette_index[index] = position;
     }
     let pixels = blocks.iter().map(|&index| palette_index[index]).collect();

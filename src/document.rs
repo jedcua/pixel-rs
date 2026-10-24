@@ -6,11 +6,12 @@ use std::fmt::Write as _;
 
 use crate::parse::{Image, Rgba};
 
-/// One palette line: a key char and its color.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One palette line: a key char, its color, and an optional label.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaletteEntry {
     pub key: char,
     pub color: Rgba,
+    pub label: Option<String>,
 }
 
 /// A palette change that the document does not accept.
@@ -133,8 +134,8 @@ impl Document {
         Ok(self.palette.len() - 1)
     }
 
-    /// Replaces the key and the color of the palette entry `index`. All the
-    /// pixels that use the entry get the new color.
+    /// Replaces the key, the color, and the label of the palette entry
+    /// `index`. All the pixels that use the entry get the new color.
     ///
     /// # Errors
     ///
@@ -204,13 +205,14 @@ impl Document {
     }
 
     /// Returns the `.pxl` source text: one `<key> - #RRGGBBAA` line per
-    /// palette entry, a blank line, and then the pixel rows.
+    /// palette entry, with ` - <label>` at the end if the entry has a label,
+    /// a blank line, and then the pixel rows.
     #[must_use]
     pub fn to_pxl(&self) -> String {
         let mut text = String::new();
         for entry in &self.palette {
             // A `String` cannot fail as a `fmt::Write` target.
-            let _ = writeln!(text, "{} - {}", entry.key, entry.color);
+            let _ = writeln!(text, "{entry}");
         }
         text.push('\n');
         for row in self.pixels.chunks_exact(self.width as usize) {
@@ -260,6 +262,7 @@ mod tests {
         PaletteEntry {
             key,
             color: Rgba([1, 2, 3, 4]),
+            label: None,
         }
     }
 
@@ -268,6 +271,15 @@ mod tests {
         let doc = Document::parse("a-#11aa22ff\r\n\r\n\r\naa\r\n").unwrap();
         assert_eq!(doc.to_pxl(), "a - #11AA22FF\n\naa\n");
         assert_eq!(Document::parse(&doc.to_pxl()).unwrap(), doc);
+    }
+
+    #[test]
+    fn keeps_labels_when_it_writes() {
+        let doc = Document::parse("a-#11aa22ff -  sky blue \nb - #000000FF\n\nab\n").unwrap();
+        assert_eq!(
+            doc.to_pxl(),
+            "a - #11AA22FF - sky blue\nb - #000000FF\n\nab\n"
+        );
     }
 
     #[test]
@@ -299,6 +311,18 @@ mod tests {
         doc.set_entry(1, entry('Y')).unwrap();
         assert!(doc.to_pxl().ends_with("YYY\nYOr\n"));
         assert_eq!(doc.to_image().pixel(0, 0), Rgba([1, 2, 3, 4]));
+    }
+
+    #[test]
+    fn set_entry_replaces_the_label() {
+        let mut doc = Document::parse("a - #000000FF - ink\n\na\n").unwrap();
+        let mut new = entry('b');
+        new.label = Some("sky".into());
+        doc.set_entry(0, new.clone()).unwrap();
+        assert_eq!(doc.to_pxl(), "b - #01020304 - sky\n\nb\n");
+        new.label = None;
+        doc.set_entry(0, new).unwrap();
+        assert_eq!(doc.to_pxl(), "b - #01020304\n\nb\n");
     }
 
     #[test]

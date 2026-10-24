@@ -129,7 +129,7 @@ H - #5B4B8AFF
 ..KK..
 ```
 
-- The palette comes first. Each line is `<char> - #RRGGBBAA`. The key is one visible char.
+- The palette comes first. Each line is `<char> - #RRGGBBAA`. The key is one visible char. You can add ` - <label>` at the end of a line, for example `K - #2B140FFF - outline`.
 - One blank line comes next.
 - Then the pixel rows. Each char is one pixel. All rows have the same width.
 

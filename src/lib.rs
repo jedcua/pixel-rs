@@ -3,7 +3,8 @@
 //!
 //! A `.pxl` file has two sections. A blank line separates them.
 //!
-//! 1. The palette: one entry per line, in the form `<char> - #RRGGBBAA`.
+//! 1. The palette: one entry per line, in the form `<char> - #RRGGBBAA`, with
+//!    an optional ` - <label>` at the end.
 //! 2. The pixel data: one row per line. Each char is one pixel.
 //!
 //! ```text

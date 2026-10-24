@@ -1,11 +1,11 @@
-. - #00000000
-K - #2B1410FF
-1 - #7A2A14FF
-2 - #B9471CFF
-3 - #E8742AFF
-m - #D25A22FF
-4 - #F89A45FF
-5 - #FFD9A0FF
+. - #00000000 - background
+K - #2B1410FF - outline and seams
+1 - #7A2A14FF - darkest shadow
+2 - #B9471CFF - shadow
+3 - #E8742AFF - base orange
+m - #D25A22FF - mid tone
+4 - #F89A45FF - light
+5 - #FFD9A0FF - highlight
 
 ...........1111KKKKK............
 .........113333K3333KK..........

@@ -62,6 +62,18 @@ impl fmt::Display for Rgba {
     }
 }
 
+/// Writes the palette line: `<char> - #RRGGBBAA`, and ` - <label>` if the
+/// entry has a label. [`parse_palette_entry`] reads this form.
+impl fmt::Display for PaletteEntry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} - {}", self.key, self.color)?;
+        if let Some(label) = &self.label {
+            write!(f, " - {label}")?;
+        }
+        Ok(())
+    }
+}
+
 /// A parsed pixel art image.
 ///
 /// The width and the height are 1 or more, and the image has exactly
@@ -140,7 +152,8 @@ pub enum ParseErrorKind {
     MissingPalette,
     /// The file has no pixel rows after the palette.
     MissingPixels,
-    /// A palette line does not have the form `<char> - #RRGGBBAA`.
+    /// A palette line does not have the form `<char> - #RRGGBBAA`, with an
+    /// optional ` - <label>`.
     InvalidPaletteEntry,
     /// A palette color is not `#` and 8 hex digits.
     InvalidColor(String),
@@ -170,7 +183,7 @@ impl fmt::Display for ParseErrorKind {
             ),
             ParseErrorKind::InvalidPaletteEntry => write!(
                 f,
-                "palette entry is not valid; use the form `<char> - #RRGGBBAA`"
+                "palette entry is not valid; use the form `<char> - #RRGGBBAA` or `<char> - #RRGGBBAA - <label>`"
             ),
             ParseErrorKind::InvalidColor(color) => write!(
                 f,
@@ -333,8 +346,9 @@ fn parse_row(
     Ok(pixels.len() - row_start)
 }
 
-/// Parses one palette line in the form `<char> - #RRGGBBAA`. `number` is the
-/// line number for errors. The line must not be empty.
+/// Parses one palette line in the form `<char> - #RRGGBBAA`, with an optional
+/// ` - <label>` at the end. `number` is the line number for errors. The line
+/// must not be empty.
 fn parse_palette_entry(number: usize, line: &str) -> Result<PaletteEntry, ParseError> {
     let mut chars = line.chars();
     let key = chars.next().expect("palette line is not empty");
@@ -343,21 +357,32 @@ fn parse_palette_entry(number: usize, line: &str) -> Result<PaletteEntry, ParseE
     }
 
     let invalid_entry = || ParseError::new(number, 1, ParseErrorKind::InvalidPaletteEntry);
-    let color = chars
+    let after_dash = chars
         .as_str()
         .trim_start()
         .strip_prefix('-')
         .ok_or_else(invalid_entry)?
         .trim_start();
-    if color.is_empty() {
+    if after_dash.is_empty() {
         return Err(invalid_entry());
     }
 
-    let column = line.chars().count() - color.chars().count() + 1;
+    let (color, rest) = after_dash
+        .split_once(char::is_whitespace)
+        .unwrap_or((after_dash, ""));
+    let label = match rest.trim_start() {
+        "" => None,
+        rest => {
+            let label = rest.strip_prefix('-').ok_or_else(invalid_entry)?.trim();
+            (!label.is_empty()).then(|| label.to_owned())
+        }
+    };
+
+    let column = line.chars().count() - after_dash.chars().count() + 1;
     let color = Rgba::from_hex(color).ok_or_else(|| {
         ParseError::new(number, column, ParseErrorKind::InvalidColor(color.into()))
     })?;
-    Ok(PaletteEntry { key, color })
+    Ok(PaletteEntry { key, color, label })
 }
 
 #[cfg(test)]
@@ -448,6 +473,23 @@ mod tests {
     fn rejects_entry_without_dash() {
         assert_eq!(
             kind("X #FFFFFFFF\n\nX\n"),
+            ParseErrorKind::InvalidPaletteEntry
+        );
+    }
+
+    #[test]
+    fn parses_an_optional_label_after_the_color() {
+        let doc =
+            Document::parse("A - #000000FF - dark - ink\nB - #FFFFFFFF\nC - #FF0000FF -\n\nABC\n")
+                .unwrap();
+        let labels: Vec<_> = doc.palette().iter().map(|e| e.label.as_deref()).collect();
+        assert_eq!(labels, [Some("dark - ink"), None, None]);
+    }
+
+    #[test]
+    fn rejects_text_after_the_color_without_a_dash() {
+        assert_eq!(
+            kind("X - #FFFFFFFF label\n\nX\n"),
             ParseErrorKind::InvalidPaletteEntry
         );
     }

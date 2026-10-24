@@ -12,7 +12,7 @@ use super::app::{Action, Alert, App, Dialog, Hit, Screen};
 use super::form::{EntryForm, Field, RemoveForm};
 
 /// Width of the palette panel, with its border.
-const PANEL_WIDTH: u16 = 24;
+const PANEL_WIDTH: u16 = 40;
 /// Columns between two buttons.
 const BUTTON_GAP: u16 = 1;
 /// Width of a dialog, with its border. The longest message must fit.
@@ -139,16 +139,18 @@ fn draw_palette(frame: &mut Frame, area: Rect, app: &App, hits: &mut Vec<Hit>) {
     draw_buttons(frame, buttons.as_position(), &actions, hits);
 }
 
-/// Draws one palette row: a swatch, the key, and the color.
+/// Draws one palette row: a swatch, the key, the color, and the label. The
+/// panel clips a long label. The status bar shows the full label.
 fn draw_palette_row(frame: &mut Frame, area: Rect, app: &App, index: usize) {
-    let entry = app.document.palette()[index];
+    let entry = &app.document.palette()[index];
     let style = if index == app.selected {
         SELECTED
     } else {
         Style::new()
     };
     let marker = if index == app.selected { ">" } else { " " };
-    let text = format!("{marker}    {}  {}", entry.key, entry.color);
+    let label = entry.label.as_deref().unwrap_or_default();
+    let text = format!("{marker}    {}  {}  {label}", entry.key, entry.color);
     frame.render_widget(Paragraph::new(text).style(style), area);
     paint_swatch(
         frame.buffer_mut(),
@@ -159,7 +161,7 @@ fn draw_palette_row(frame: &mut Frame, area: Rect, app: &App, index: usize) {
 
 /// Draws the pixel below the pointer, the selected color, and a message.
 fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
-    let entry = app.document.palette()[app.selected];
+    let entry = &app.document.palette()[app.selected];
     let pointer = app.hover.map_or_else(String::new, |pixel| {
         let key = app.document.palette()[app.document.pixel(pixel.x, pixel.y)].key;
         format!("x {}, y {}: {key}  |  ", pixel.x, pixel.y)
@@ -169,8 +171,12 @@ fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
         .message
         .as_deref()
         .unwrap_or("Drag: draw  Right-click/i: pick  Tab: next color  ^S: save  q: quit");
+    let label = entry
+        .label
+        .as_ref()
+        .map_or_else(String::new, |label| format!(" {label}"));
     let text = format!(
-        " {pointer}pen {} {} ({usage} px)  |  {message}",
+        " {pointer}pen {} {}{label} ({usage} px)  |  {message}",
         entry.key, entry.color
     );
     frame.render_widget(Paragraph::new(text).style(MUTED), area);
@@ -190,11 +196,12 @@ fn draw_entry_dialog(frame: &mut Frame, form: &EntryForm, app: &App, hits: &mut 
         None => " Add color ".to_string(),
         Some(index) => format!(" Edit color `{}` ", app.document.palette()[index].key),
     };
-    let inner = open_dialog(frame, &title, 7);
+    let inner = open_dialog(frame, &title, 8);
     let key = form.key.map(String::from).unwrap_or_default();
     let fields = [
         (Field::Key, "Key:   ", key),
         (Field::Color, COLOR_LABEL, form.color.clone()),
+        (Field::Label, "Label: ", form.label.clone()),
     ];
     for (row, (field, label, value)) in (inner.y..).zip(fields) {
         let area = Rect::new(inner.x, row, inner.width, 1);
@@ -216,9 +223,9 @@ fn draw_entry_dialog(frame: &mut Frame, form: &EntryForm, app: &App, hits: &mut 
             color,
         );
     }
-    let hint = "Type #RRGGBB or #RRGGBBAA. Tab: next field.";
-    draw_line(frame, inner, 3, Span::styled(hint, MUTED));
-    draw_error(frame, inner, form.error.as_deref());
+    let hint = "Type #RRGGBB or #RRGGBBAA. Tab: next field. The label is optional.";
+    draw_line(frame, inner, 4, Span::styled(hint, MUTED));
+    draw_error(frame, inner, 5, form.error.as_deref());
     let buttons = [
         Button::new("OK", Action::Submit),
         Button::new("Cancel", Action::Close),
@@ -246,7 +253,7 @@ fn draw_remove_dialog(frame: &mut Frame, form: &RemoveForm, app: &App, hits: &mu
         let hint = "Type a palette key.";
         draw_line(frame, inner, 3, Span::styled(hint, MUTED));
     }
-    draw_error(frame, inner, form.error.as_deref());
+    draw_error(frame, inner, 4, form.error.as_deref());
     let buttons = [
         Button::new("Delete", Action::Submit),
         Button::new("Cancel", Action::Close),
@@ -345,9 +352,10 @@ fn draw_field(frame: &mut Frame, area: Rect, field: &TextField) {
     }
 }
 
-fn draw_error(frame: &mut Frame, inner: Rect, error: Option<&str>) {
+/// Draws the error on row `row` of the dialog area `inner`.
+fn draw_error(frame: &mut Frame, inner: Rect, row: u16, error: Option<&str>) {
     if let Some(error) = error {
-        draw_line(frame, inner, 4, Span::styled(error, ERROR));
+        draw_line(frame, inner, row, Span::styled(error, ERROR));
     }
 }
 

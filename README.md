@@ -7,8 +7,8 @@ image.
 ## The `.pxl` format
 
 ```pxl
-O - #000000FF
-X - #FFFFFFFF
+O - #000000FF - outline
+X - #FFFFFFFF - fill
 
 XXXXX
 XOOOX
@@ -26,6 +26,8 @@ A `.pxl` file has two sections. One or more blank lines separate them.
    - The color is `#` and 8 hex digits: red, green, blue, and alpha.
      Uppercase and lowercase digits are both valid.
    - Each key can occur one time only.
+   - A label is optional. Add ` - <label>` after the color, for example
+     `K - #2B140FFF - outline`. The label can have spaces and dashes.
 2. **Pixel data.** Each line is one row of the image. Each char is one pixel.
    - Each char must be a key in the palette.
    - All rows must have the same width.
@@ -219,16 +221,17 @@ terminals show approximate colors. The file always keeps the exact colors.
 | Select a color              | Click a palette row                     | `Tab`, `Shift+Tab`      |
 | Pick a color from the image | Right-click a pixel                     | `i` (the pixel below the pointer) |
 | Add a color                 | **Add**                                 | `a`                     |
-| Change the key or the color | **Edit**                                | `e`, `Enter`            |
+| Edit key, color, or label   | **Edit**                                | `e`, `Enter`            |
 | Delete a color              | **Delete**                              | `d`, `Delete`           |
 | Scroll a large image        | Wheel; `Shift`+wheel scrolls sideways   | Arrow keys              |
 | Save the file               | **Save**                                | `Ctrl+S`                |
 | Quit                        | **Quit**                                | `q`, `Ctrl+Q`           |
 
 In the Add and Edit dialogs, type the color as `#RRGGBB` or `#RRGGBBAA`.
-`#RRGGBB` gets the alpha `FF`. Use `Tab` to go to the other field, `Enter` to
-accept, and `Esc` to cancel. A new color for an entry changes all the pixels
-that use it.
+`#RRGGBB` gets the alpha `FF`. The label is optional, with a maximum of 32
+chars. A blank label removes the label. The status bar shows the label of the
+selected color. Use `Tab` to go to the next field, `Enter` to accept, and
+`Esc` to cancel. A new color for an entry changes all the pixels that use it.
 
 If pixels use a color that you delete, the dialog asks for a replacement
 key. The pixels change to that key. The dialog proposes the first fully
@@ -247,9 +250,9 @@ Quit always asks for confirmation:
   failure. After a save and quit, `pxl` prints the save result in the
   terminal.
 
-When the editor saves, it writes each palette line as `<key> - #RRGGBBAA`
-with uppercase digits, and one blank line before the pixel rows. The palette
-order and the pixel data do not change.
+When the editor saves, it writes each palette line as `<key> - #RRGGBBAA`,
+with uppercase digits and the label if the entry has one, and one blank line
+before the pixel rows. The palette order and the pixel data do not change.
 
 ## Tasks
 

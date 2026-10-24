@@ -9,11 +9,15 @@ const KEY_PROPOSALS: &str = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23
 /// The maximum length of the color text: `#` and 8 hex digits.
 const COLOR_TEXT_MAX: usize = 9;
 
+/// The maximum length of the label text, in chars.
+const LABEL_TEXT_MAX: usize = 32;
+
 /// A text field of the entry form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     Key,
     Color,
+    Label,
 }
 
 /// The form to add a palette entry or to change one.
@@ -23,6 +27,7 @@ pub struct EntryForm {
     pub index: Option<usize>,
     pub key: Option<char>,
     pub color: String,
+    pub label: String,
     pub field: Field,
     pub error: Option<String>,
 }
@@ -38,6 +43,7 @@ impl EntryForm {
             index: None,
             key,
             color: document.palette()[selected].color.to_string(),
+            label: String::new(),
             field: Field::Color,
             error: None,
         }
@@ -45,23 +51,26 @@ impl EntryForm {
 
     /// Makes a form to change the entry `index`.
     pub fn edit(document: &Document, index: usize) -> Self {
-        let entry = document.palette()[index];
+        let entry = &document.palette()[index];
         EntryForm {
             index: Some(index),
             key: Some(entry.key),
             color: entry.color.to_string(),
+            label: entry.label.clone().unwrap_or_default(),
             field: Field::Color,
             error: None,
         }
     }
 
     /// Types `typed` into the active field. The key field holds one char, so
-    /// a new char replaces the old one.
+    /// a new char replaces the old one. The color and label fields ignore a
+    /// char after their maximum length.
     pub fn type_char(&mut self, typed: char) {
         match self.field {
             Field::Key => self.key = Some(typed),
             Field::Color if self.color.len() < COLOR_TEXT_MAX => self.color.push(typed),
-            Field::Color => {}
+            Field::Label if self.label.chars().count() < LABEL_TEXT_MAX => self.label.push(typed),
+            Field::Color | Field::Label => {}
         }
     }
 
@@ -72,18 +81,24 @@ impl EntryForm {
             Field::Color => {
                 self.color.pop();
             }
+            Field::Label => {
+                self.label.pop();
+            }
         }
     }
 
-    /// Moves the focus to the other field.
+    /// Moves the focus to the next field. The last field goes back to the
+    /// first.
     pub fn next_field(&mut self) {
         self.field = match self.field {
             Field::Key => Field::Color,
-            Field::Color => Field::Key,
+            Field::Color => Field::Label,
+            Field::Label => Field::Key,
         };
     }
 
-    /// Returns the entry that the form describes.
+    /// Returns the entry that the form describes. A blank label gives no
+    /// label.
     ///
     /// # Errors
     ///
@@ -92,7 +107,12 @@ impl EntryForm {
         let key = self.key.ok_or("Key is empty. Type one char.")?;
         let color = Rgba::from_lenient_hex(&self.color)
             .ok_or("Color is not valid. Type #RRGGBB or #RRGGBBAA.")?;
-        Ok(PaletteEntry { key, color })
+        let label = self.label.trim();
+        Ok(PaletteEntry {
+            key,
+            color,
+            label: (!label.is_empty()).then(|| label.to_owned()),
+        })
     }
 }
 
@@ -173,6 +193,29 @@ mod tests {
         form.next_field();
         form.backspace();
         assert!(form.entry().unwrap_err().starts_with("Color is not valid"));
+    }
+
+    #[test]
+    fn entry_form_makes_a_label_only_if_the_text_is_not_blank() {
+        let mut form = EntryForm::edit(&document(), 0);
+        assert_eq!(form.entry().unwrap().label, None);
+        form.field = Field::Label;
+        for typed in "  sky blue ".chars() {
+            form.type_char(typed);
+        }
+        assert_eq!(form.entry().unwrap().label.as_deref(), Some("sky blue"));
+        form.label = "   ".into();
+        assert_eq!(form.entry().unwrap().label, None);
+    }
+
+    #[test]
+    fn label_field_stops_at_the_maximum_length() {
+        let mut form = EntryForm::add(&document(), 0);
+        form.field = Field::Label;
+        for _ in 0..LABEL_TEXT_MAX + 5 {
+            form.type_char('x');
+        }
+        assert_eq!(form.label.chars().count(), LABEL_TEXT_MAX);
     }
 
     #[test]
